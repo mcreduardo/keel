@@ -12,6 +12,7 @@ add_executable(keel_tests
     bundle_test.cpp
     is_valid_test.cpp
     introspection_test.cpp
+    async_test.cpp
 )
 target_link_libraries(keel_tests PRIVATE keel::keel)
 if(MSVC)
@@ -24,6 +25,8 @@ if(MSVC)
     target_compile_options(keel_tests PRIVATE /constexpr:steps1000000)
 endif()
 add_test(NAME keel_tests COMMAND keel_tests)
+# The async tests wait for each other with timeouts of 5 s; a hang must not stall ctest.
+set_tests_properties(keel_tests PROPERTIES TIMEOUT 120)
 
 # Compile-fail tests: compile_fail/<name>.cpp must not compile, the output must match
 # <pattern>, and (GCC/Clang) there must be exactly one error, or [errors] if given. The
@@ -142,3 +145,8 @@ keel_compile_fail(duplicate_bundle "DuplicateBundle<keel::Bundle<Config, ?Logger
 keel_compile_fail(reference_dependency "InvalidDependency<Server, ?Config ?&>")
 keel_compile_fail(require_valid "MissingDependency<Server, ?Logger>")
 keel_compile_fail(require_valid_duplicate_entry "a dependency is listed twice")
+keel_compile_fail(duplicate_async_init "keel::AsyncInit or keel::AsyncStart is listed twice")
+keel_compile_fail(optional_async_init "MisplacedAsync<Database, ?keel::Optional<keel::AsyncInit> ?>")
+keel_compile_fail(init_after_async_start "MisplacedAsync<Feed, ?keel::InitAfter<keel::AsyncStart> ?>")
+keel_compile_fail(async_init_in_compose "NotAComponent<keel::AsyncInit>")
+keel_compile_fail(get_component_on_async_marker "keel::AsyncInit and keel::AsyncStart are markers, not dependencies")

@@ -7,14 +7,19 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
+#include <exception>
 #include <initializer_list>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
@@ -127,6 +132,55 @@ struct Alternative {};
 /// keel::Optional<keel::All<I>>.
 template <class I>
 struct All {};
+
+/// Runs this component's enabled() and init() on a thread of its own, so that a slow init()
+/// (connecting to a database, loading a model) doesn't hold up unrelated components:
+///   class Database : public keel::Component<Config, Logger, keel::AsyncInit> { ... };
+/// Its init() starts as soon as every component it is ordered after has finished init() (or
+/// is disabled). Everything those init()s did is visible to it.
+///
+/// Meanwhile, the thread that called App::init() initializes the other components in init
+/// order. When it next picks one, it prefers those that an async component waits for, and
+/// it skips the ones still waiting for an async component. So components with no
+/// dependency path between them may run in a different order than without async.
+///
+/// This affects every component of the app, not only the async ones: two components with
+/// no dependency path between them may now run at the same time, sync ones included. A
+/// dependency they share (a Logger, a Metrics registry) must then be thread-safe, and so
+/// must any other state they share.
+///
+/// Thread affinity: init() runs on a worker thread, while stop() and deinit() run on the
+/// thread that drives the App. Don't rely on thread_local state, thread-bound contexts
+/// (OpenGL, CUDA, some SDKs) or locks held from init() to deinit().
+///
+/// Each async component gets its thread when the phase begins, even if it then waits for
+/// its dependencies: one thread per async component. App::init() returns only when every
+/// thread has finished.
+///
+/// If an init() (or enabled()) throws, nothing new starts, and the init()s already running
+/// finish. Everything initialized is then deinitialized in reverse order, on the calling
+/// thread. The exception of the earliest failed component in init order is rethrown; the
+/// others are dropped, and which components get to fail depends on timing. Each failure is
+/// in App::timings() with `failed`. A thread that can't be created counts as a failure of
+/// its component (std::system_error). App::setAsync(false) runs everything on the calling
+/// thread instead, e.g. to debug. List the marker once, on its own (not inside
+/// keel::Optional<...> or another marker).
+struct AsyncInit {};
+
+/// Like keel::AsyncInit, for start(): runs this component's start() on a thread of its own,
+/// as soon as every component it is ordered after has finished start(). start() still
+/// begins only after every component's init() has finished, async ones included.
+///
+/// start() must still return: its thread ends when it does, and App::start() waits for it.
+/// For work that runs until stop(), start your own thread in start() and join it in stop().
+/// Joining there also makes your thread's lookups (getComponent<T>()) safe: stop() runs
+/// before any of your dependencies is stopped or deinitialized.
+///
+/// Thread affinity: start() runs on a worker thread, stop() on the thread that drives the
+/// App. The rest is as for keel::AsyncInit (shared state, failures). If a start() throws,
+/// the start()s already running finish, the started components are stopped, and every
+/// component is deinitialized, in reverse order on the calling thread.
+struct AsyncStart {};
 
 /// A named group of components, to list in keel::compose<...> or keel::App<...> in place of
 /// its components:
@@ -268,7 +322,8 @@ struct MemberOf<R C::*> {
 
 // How a component uses the type an entry of its keel::Component<...> list names.
 // `misnested` is All<Optional<I>>, which is reported at compose time.
-enum class Use { required, optional, ordering, provided, alternative, all, optionalAll, misnested };
+// `async` is keel::AsyncInit or keel::AsyncStart, which name no type.
+enum class Use { required, optional, ordering, provided, alternative, all, optionalAll, misnested, async };
 
 struct EmptySplit {
     using required = TypeList<>;
@@ -278,11 +333,14 @@ struct EmptySplit {
     using misnested = TypeList<>;
     using provides = TypeList<>;  // also Alternative<I>
     using alternatives = TypeList<>;
+    static constexpr bool asyncInit = false;
+    static constexpr bool asyncStart = false;
 };
 
 // Separates the entries of a keel::Component<...> list by kind: required, optional,
-// ordering only, collections (All<I>, Optional<All<I>>) and provided interfaces
-// (Provides<I>, Alternative<I>). `target` is the type the entry names.
+// ordering only, collections (All<I>, Optional<All<I>>), provided interfaces
+// (Provides<I>, Alternative<I>) and the AsyncInit/AsyncStart markers. `target` is the type
+// the entry names (for a marker, the marker itself).
 template <class D>
 struct Split : EmptySplit {
     using required = TypeList<D>;
@@ -334,8 +392,24 @@ struct Split<All<Optional<I>>> : EmptySplit {
     static constexpr Use use = Use::misnested;
 };
 
+template <>
+struct Split<AsyncInit> : EmptySplit {
+    using target = AsyncInit;
+    static constexpr Use use = Use::async;
+    static constexpr bool asyncInit = true;
+};
+template <>
+struct Split<AsyncStart> : EmptySplit {
+    using target = AsyncStart;
+    static constexpr Use use = Use::async;
+    static constexpr bool asyncStart = true;
+};
+
 template <class T>
-inline constexpr bool isDependencyMarker = false;
+inline constexpr bool isAsyncMarker = std::is_same_v<T, AsyncInit> || std::is_same_v<T, AsyncStart>;
+
+template <class T>
+inline constexpr bool isDependencyMarker = isAsyncMarker<T>;
 template <class T>
 inline constexpr bool isDependencyMarker<Optional<T>> = true;
 template <class T>
@@ -349,7 +423,8 @@ inline constexpr bool isDependencyMarker<All<T>> = true;
 
 // Optional<T>, InitAfter<T> and Optional<All<T>> may name a type that isn't composed, and
 // Provides<T>, Alternative<T> and All<T> an interface, but it must be a type that could be one: a class,
-// not const or volatile, not another marker. Anything else would never match.
+// not const or volatile, not another marker (AsyncInit and AsyncStart included). Anything
+// else would never match.
 template <class T>
 inline constexpr bool couldBeComponent =
     std::is_class_v<T> && !std::is_const_v<T> && !std::is_volatile_v<T> && !isDependencyMarker<T>;
@@ -500,9 +575,10 @@ protected:
     // compiles and is never called.
 
     /// Return false to leave this component out at runtime, e.g. from configuration. Asked
-    /// once, just before this component's init(); if it returns false, init() and the other
-    /// hooks don't run (the component is still constructed and destroyed). Its dependencies
-    /// are initialized by then, so it can use them (typically a Config). keel hasn't checked
+    /// once, just before this component's init() and on the same thread (its own thread
+    /// with keel::AsyncInit); if it returns false, init() and the other hooks don't run (the
+    /// component is still constructed and destroyed). Its dependencies are initialized by
+    /// then, so it can use them (typically a Config). keel hasn't checked
     /// them yet, though: getAll<I>() may be empty, and a required dependency that is
     /// disabled throws keel::Error. Components that depend on a disabled one see it as
     /// absent: findComponent<T>() returns nullptr, getAll<I>() leaves it out, and a required
@@ -513,19 +589,23 @@ protected:
     /// `bool enabled() const` overrides this hook with it.
     virtual bool enabled() const { return true; }
     /// Acquire and configure: open files, bind sockets, read settings. Runs after the
-    /// init() of every dependency. Throw to abort startup. If it throws, neither stop() nor
+    /// init() of every dependency, on the thread that called App::init(), or on a thread of
+    /// its own with keel::AsyncInit. Throw to abort startup. If it throws, neither stop() nor
     /// deinit() is called on this component: undo its partial work before throwing.
     virtual void init() {}
     /// Begin activity: accept connections, start threads. Runs after the init() of every
-    /// component in the app, and after the start() of every dependency. Throw to abort
+    /// component in the app, and after the start() of every dependency, on the thread that
+    /// called App::start(), or on a thread of its own with keel::AsyncStart. Throw to abort
     /// startup. If it throws, deinit() is called on this component but stop() is not: undo
     /// its partial work before throwing (e.g. join a thread it launched).
     virtual void start() {}
-    /// End activity: stop accepting, drain work. Runs in reverse order: the components
-    /// that depend on this one are already stopped. Must not throw: handle or log failures
+    /// End activity: stop accepting, drain work, join the threads start() launched. Runs
+    /// in reverse order, on the thread that calls App::stop(): the components that depend
+    /// on this one are already stopped. Must not throw: handle or log failures
     /// here.
     virtual void stop() noexcept {}
-    /// Release. Runs in reverse order, after every stop(). Dependencies are still
+    /// Release. Runs in reverse order, after every stop(), on the thread that calls
+    /// App::deinit() (or destroys the App). Dependencies are still
     /// initialized, so they can still be used. Must not throw: handle or log cleanup
     /// failures here.
     virtual void deinit() noexcept {}
@@ -550,11 +630,19 @@ private:
     // component, every Optional<T> to at most one, and every All<I> to at least one.
     void checkDependencies() const;
 
+    // Set when the component is added to an App, then only read.
     Registry* registry_ = nullptr;
     const Need* needs_ = nullptr;  // the entries of the keel::Component<...> list that init() checks
     std::size_t needCount_ = 0;
     std::string_view name_;
-    State state_ = State::created;
+    bool asyncInit_ = false;   // keel::AsyncInit
+    bool asyncStart_ = false;  // keel::AsyncStart
+
+    // Written only by the thread running this component's hook (or the rollback, after
+    // every thread has finished). A dependent reads it after the scheduler has ordered that
+    // write before the read (see Registry::Schedule). Atomic so that a lookup from a thread
+    // the component started itself (in start(), say) isn't a data race.
+    std::atomic<State> state_ = State::created;
 };
 
 // ===========================================================================
@@ -565,6 +653,13 @@ struct Binding {
     void* object;      // the component, or its interface subobject; cast back to the bound type only
     bool alternative;  // bound through keel::Alternative<>: chosen at runtime
 };
+
+// For keel's own tests only: called on the thread that drives the App before each thread
+// keel creates. A test makes it throw std::system_error to simulate a failed creation.
+struct TestHooks {
+    void (*beforeThread)() = nullptr;
+};
+inline TestHooks testHooks;
 
 class Registry {
 public:
@@ -579,10 +674,25 @@ public:
         base.needs_ = Needs<C>::table.data();
         base.needCount_ = Needs<C>::table.size();
         base.name_ = typeName<C>();
+        base.asyncInit_ = ComponentOf<C>::asyncInit;
+        base.asyncStart_ = ComponentOf<C>::asyncStart;
         components_.push_back(&base);
+        dependencies_.emplace_back();
         bindings_[typeId<C>()].push_back(
             Binding{&base, static_cast<void*>(&component), contains<C, AlternativesOf<C>>});
         bindInterfaces(component, base, ProvidedOf<C>{});
+    }
+
+    // The component at init position `dependent` is ordered after the one at `dependency`
+    // (an earlier position). Only needed, and only added, when some component is async.
+    void addDependency(std::size_t dependent, std::size_t dependency) {
+        dependencies_[dependent].push_back(dependency);
+    }
+    // Some component is async: the phases may need the scheduler (else it is never used).
+    void setHasAsync() noexcept { hasAsync_ = true; }
+    void setAsync(bool async) {
+        if (state_ != State::building) throw Error("keel: setAsync() must be called before init()");
+        async_ = async;
     }
 
     void init();
@@ -619,6 +729,20 @@ private:
     // can't be started again.
     enum class State { building, initialized, started, stopped, failed, deinitialized };
 
+    class Schedule;
+
+    // Runs init() or start() on every component (Phase::init or Phase::start), each after
+    // the ones it is ordered after; the async ones on their own threads (Schedule). Throws
+    // after every thread has finished; the caller rolls back.
+    void runPhase(Phase phase);
+    // The init or start step of the component at init position i, on the current thread.
+    void runOne(Phase phase, std::size_t i);
+    // The component at init position i runs this phase on its own thread.
+    bool runsAsync(Phase phase, std::size_t i) const noexcept;
+
+    bool hasAsync_ = false;  // some component is async (known at compile time)
+    bool async_ = true;      // App::setAsync()
+
     void stopAll() noexcept;
     void deinitAll() noexcept;
 
@@ -641,9 +765,12 @@ private:
         (c.*hook)();
         recorder.failed = false;
     }
+    // May run on several threads at once (async components): the entries are appended
+    // under timingsMutex_, in the order the calls finish.
     void record(Phase phase, const ComponentBase& c, std::chrono::steady_clock::time_point begin,
                 bool failed) noexcept {
         const auto duration = std::chrono::steady_clock::now() - begin;
+        const std::lock_guard lock(timingsMutex_);
         // Can't be full (see timed()); checked anyway, since a push_back that allocated
         // could throw here, in a noexcept function.
         assert(timings_.size() < timings_.capacity());
@@ -667,10 +794,17 @@ private:
         }
     }
 
+    // Built by the App's constructor, then only read (also by several threads at once).
     std::vector<ComponentBase*> components_;  // in init order
+    std::vector<std::vector<std::size_t>> dependencies_;  // per init position: earlier positions it waits for
     std::unordered_map<TypeId, std::vector<Binding>> bindings_;  // each in init order
-    std::vector<Timing> timings_;  // in call order
-    State state_ = State::building;
+
+    std::mutex timingsMutex_;
+    std::vector<Timing> timings_;  // in the order the calls finished
+
+    // Written only by the thread that drives the App (init(), start(), ...), and never while
+    // a phase's threads run. Atomic for lookups from threads the components start themselves.
+    std::atomic<State> state_ = State::building;
 };
 
 // ===========================================================================
@@ -759,6 +893,7 @@ struct ComponentListCheck {
     static_assert(Base::uniqueInterfaces,
                   "keel: keel::Provides<I> is listed twice in keel::Component<...> (keel::Provides<I> and "
                   "keel::Alternative<I> count as the same)");
+    static_assert(Base::uniqueMarkers, "keel: keel::AsyncInit or keel::AsyncStart is listed twice in keel::Component<...>");
 };
 
 template <class Component, class Dependency>
@@ -866,6 +1001,16 @@ struct InvalidDependency {
                   "keel::InitAfter<T>, keel::Provides<T>, keel::Alternative<T> or keel::All<T>), and T can never "
                   "be a component or an interface: T must be a class type, not a reference, not const/volatile, "
                   "and not itself keel::Optional, keel::InitAfter, keel::Provides, keel::Alternative or keel::All");
+};
+
+template <class Component, class Entry>
+inline constexpr bool asyncMarkerOnItsOwn = false;  // only read when the check fails
+template <class Component, class Entry>
+struct MisplacedAsync {
+    static_assert(asyncMarkerOnItsOwn<Component, Entry>,
+                  "keel: the Component in MisplacedAsync<Component, Entry> lists keel::AsyncInit or "
+                  "keel::AsyncStart inside Entry. They aren't dependencies: list them on their own, as in "
+                  "keel::Component<Config, keel::AsyncInit>");
 };
 
 template <class Component, class Bundle>
@@ -1074,7 +1219,11 @@ struct Composition<TypeList<Cs...>> {
         using T = typename Split<Entry>::target;
         constexpr Use use = Split<Entry>::use;
         constexpr bool collection = use == Use::all || use == Use::optionalAll;
-        if constexpr (isBundle<T>) {
+        if constexpr (use == Use::async) {
+            return Outcome<Passed<C, Entry>>{};
+        } else if constexpr (isAsyncMarker<T>) {
+            return Outcome<MisplacedAsync<C, Entry>>{};
+        } else if constexpr (isBundle<T>) {
             return Outcome<BundleAsDependency<C, T>>{};
         } else if constexpr (use == Use::misnested) {
             return Outcome<MisnestedAll<C, T>>{};
@@ -1336,7 +1485,12 @@ public:
     // of them is a duplicate.
     static constexpr bool uniqueDependencies = detail::UniqueList<DeclaredDependencies>::value;
     static constexpr bool uniqueInterfaces = detail::UniqueList<ProvidedInterfaces>::value;
-    static constexpr bool uniqueEntries = uniqueDependencies && uniqueInterfaces;
+    // keel::AsyncInit, keel::AsyncStart: init() / start() on a thread of its own.
+    static constexpr bool asyncInit = (detail::Split<Dependencies>::asyncInit || ...);
+    static constexpr bool asyncStart = (detail::Split<Dependencies>::asyncStart || ...);
+    static constexpr bool uniqueMarkers = (0 + ... + (detail::Split<Dependencies>::asyncInit ? 1 : 0)) <= 1 &&
+                                          (0 + ... + (detail::Split<Dependencies>::asyncStart ? 1 : 0)) <= 1;
+    static constexpr bool uniqueEntries = uniqueDependencies && uniqueInterfaces && uniqueMarkers;
 
 private:
     // The accessor asserts on T run unless the list has a mistake that is the one error
@@ -1344,6 +1498,11 @@ private:
     // (MisnestedAll, at compose time).
     template <class T>
     static constexpr bool checkedAccess = uniqueDependencies && !detail::contains<T, MisnestedDependencies>;
+    // A lookup of keel::AsyncInit or keel::AsyncStart is an error, unless the list names it
+    // inside another marker (Optional<AsyncInit>): MisplacedAsync, at compose time, is then
+    // the one error.
+    template <class T>
+    static constexpr bool markerAccess = detail::contains<T, DeclaredDependencies>;
 
 public:
 
@@ -1355,11 +1514,15 @@ protected:
     /// A required dependency. Compiles only if T is listed in keel::Component<...> as a
     /// required dependency (not keel::Optional<T>, keel::InitAfter<T> or keel::All<T>).
     /// Usable from enabled() and init() on; resolve it in init() and keep the reference.
+    /// With keel::AsyncInit too: T's init() has finished, and what it did is visible.
     /// For an interface with keel::Alternative<> providers, the enabled one.
     template <class T>
     T& getComponent() const {
         // At most one of these fails, and none if the list itself is wrong (checkedAccess).
-        if constexpr (checkedAccess<T>) {
+        if constexpr (detail::isAsyncMarker<T>) {
+            static_assert(markerAccess<T>, "keel: keel::AsyncInit and keel::AsyncStart are markers, not dependencies: "
+                                           "there is no component to get");
+        } else if constexpr (checkedAccess<T>) {
             static_assert(!detail::contains<T, OptionalDependencies>,
                           "keel: T is declared keel::Optional<T>; use findComponent<T>(), which may return nullptr");
             static_assert(!detail::contains<T, InitAfterDependencies>,
@@ -1378,7 +1541,10 @@ protected:
     /// before, e.g. from a constructor); resolve it in init() and keep the pointer.
     template <class T>
     T* findComponent() const {
-        if constexpr (checkedAccess<T>) {  // as in getComponent()
+        if constexpr (detail::isAsyncMarker<T>) {  // as in getComponent()
+            static_assert(markerAccess<T>, "keel: keel::AsyncInit and keel::AsyncStart are markers, not dependencies: "
+                                           "there is no component to find");
+        } else if constexpr (checkedAccess<T>) {
             static_assert(!detail::contains<T, RequiredDependencies>,
                           "keel: T is a required dependency; use getComponent<T>(), which never returns nullptr");
             static_assert(!detail::contains<T, InitAfterDependencies>,
@@ -1403,7 +1569,10 @@ protected:
     ///   for (HealthCheck* check : getAll<HealthCheck>()) { ... }
     template <class I>
     std::vector<I*> getAll() const {
-        if constexpr (checkedAccess<I>) {  // as in getComponent()
+        if constexpr (detail::isAsyncMarker<I>) {  // as in getComponent()
+            static_assert(markerAccess<I>, "keel: keel::AsyncInit and keel::AsyncStart are markers, not dependencies: "
+                                           "there are no components to get");
+        } else if constexpr (checkedAccess<I>) {
             static_assert(!detail::contains<I, RequiredDependencies>,
                           "keel: I is a required dependency (one provider); use getComponent<I>(), or replace it "
                           "with keel::All<I> to use every provider");
@@ -1563,6 +1732,10 @@ public:
     template <class... Args>
     explicit AppImpl(Args&&... args) : storage_(args...) {
         addAll(typename Info::Sorted{});  // in dependency order
+        if constexpr (anyAsync(typename Info::Sorted{})) {
+            registry_.setHasAsync();
+            addDependencies();
+        }
     }
 
     // Not copyable or movable: components hold pointers to each other. (Without the
@@ -1577,11 +1750,17 @@ public:
     /// Calls enabled() and then init() on every component, in dependency order (a disabled
     /// component is skipped from then on). If one throws, or a component needs a disabled
     /// one (keel::Error), the components already initialized are deinitialized in reverse,
-    /// and the exception propagates. Callable once.
+    /// and the exception propagates. Callable once. Components with keel::AsyncInit run on
+    /// threads of their own (see there); init() returns or throws after they all finished.
     void init() { registry_.init(); }
+    /// setAsync(false) runs every component on the calling thread, in init order, as if
+    /// none listed keel::AsyncInit or keel::AsyncStart: to debug, to reproduce a run, or to
+    /// narrow down a race. Call it before init() (after, it throws keel::Error). Default true.
+    void setAsync(bool async) { registry_.setAsync(async); }
     /// Calls start() on every enabled component, in dependency order. Requires a successful
     /// init(). If one throws, the components already started are stopped in reverse, then every
     /// component is deinitialized in reverse, and the exception propagates. Callable once.
+    /// Components with keel::AsyncStart run on threads of their own, as for keel::AsyncInit.
     void start() { registry_.start(); }
     /// Calls stop() on every started component, in reverse order. Does nothing if the app
     /// isn't started.
@@ -1624,20 +1803,26 @@ public:
     /// checked in a test without running anything:
     ///   static_assert(ServerApp::initOrder()[0] == "Config");
     /// Disabled components are included (enabled() is asked at runtime); timings() shows
-    /// the calls that ran. Names are keel::typeName<T>(): the type names as the compiler
-    /// spells them (`Logger`, `edge::Imu<edge::Front>`), which may differ between compilers.
+    /// the calls that ran. With keel::AsyncInit and keel::AsyncStart, components with no
+    /// dependency path between them may run in another order, or at the same time; each
+    /// still runs after the components it is ordered after. Names are keel::typeName<T>():
+    /// the type names as the compiler spells them (`Logger`, `edge::Imu<edge::Front>`),
+    /// which may differ between compilers.
     static constexpr std::array<std::string_view, Info::size> initOrder() noexcept {
         return namesOf(typename Info::Sorted{});
     }
 
-    /// How long each lifecycle call took, in call order: one entry per init(), start(),
-    /// stop() and deinit() that ran on a component. A disabled component has none (its
+    /// How long each lifecycle call took, in the order the calls finished (with
+    /// keel::AsyncInit or keel::AsyncStart, calls on different threads overlap): one entry
+    /// per init(), start(), stop() and deinit() that ran on a component. A disabled component has none (its
     /// enabled() isn't timed), nor does one whose init() never ran because a dependency
     /// was disabled. A call that threw is recorded with `failed`, followed by the
     /// rollback's stop() and deinit() calls. The view stays valid as long as the App, but
     /// holds the entries recorded when timings() was called; call it again later for more.
     /// The destructor's stop() and deinit() can't be seen: call deinit() first, then read
     /// the timings (with keel::run, read them inside fn, which runs before the shutdown).
+    /// Call it from the thread that drives the App (not from a component's hook, which may
+    /// run while other threads record).
     ///   app.init();
     ///   for (const keel::Timing& t : app.timings())
     ///       std::cout << keel::toString(t.phase) << ' ' << t.component << ' '
@@ -1647,7 +1832,7 @@ public:
     /// The dependency graph in Graphviz DOT format, to render with Graphviz:
     ///   std::ofstream("graph.dot") << app.toDot();   // then: dot -Tsvg graph.dot -o graph.svg
     /// One box per component, in init order, with the interfaces it provides
-    /// ("provides I", "alternative I"). An arrow goes from a component to each component
+    /// ("provides I", "alternative I") and its markers ("async init", "async start"). An arrow goes from a component to each component
     /// it is ordered after because of one entry of its list: plain for a required
     /// dependency, dashed for keel::Optional, dotted with an open head for keel::InitAfter,
     /// bold for keel::All, bold and dashed for keel::Optional<keel::All>; labelled with the
@@ -1729,6 +1914,20 @@ private:
     }
 
     template <class... Sorted>
+    static constexpr bool anyAsync(TypeList<Sorted...>) noexcept {
+        return ((ComponentOf<Sorted>::asyncInit || ComponentOf<Sorted>::asyncStart) || ...);
+    }
+    // The ordering edges of the graph the init order comes from, by init position: what the
+    // async scheduler waits for. A component's dependencies all come before it.
+    void addDependencies() {
+        for (std::size_t k = 0; k < Info::size; ++k) {
+            for (std::size_t m = 0; m < k; ++m) {
+                if (Info::graph[Info::order.index[k]][Info::order.index[m]]) registry_.addDependency(k, m);
+            }
+        }
+    }
+
+    template <class... Sorted>
     static constexpr std::array<std::string_view, sizeof...(Sorted)> namesOf(TypeList<Sorted...>) noexcept {
         return {typeName<Sorted>()...};
     }
@@ -1745,6 +1944,8 @@ private:
         out += concat({"  n", std::to_string(i), " [label=\""});
         appendDotEscaped(out, typeName<C>());
         dotInterfaces<C>(out, ProvidedOf<C>{});
+        if constexpr (ComponentOf<C>::asyncInit) out += "\\nasync init";
+        if constexpr (ComponentOf<C>::asyncStart) out += "\\nasync start";
         out += disabled ? "\\n(disabled)\", color=gray, fontcolor=gray];\n" : "\"];\n";
     }
     template <class C, class... Is>
@@ -1791,6 +1992,7 @@ private:
             case Use::provided:  // no edges
             case Use::alternative:
             case Use::misnested:
+            case Use::async:
                 return "";
         }
         return "";
@@ -1957,7 +2159,7 @@ inline std::vector<void*> ComponentBase::lookupAll(TypeId id, std::string_view d
 }
 
 // Runs before init(): the dependencies come earlier in the init order, so each is
-// initialized or disabled by now.
+// initialized or disabled by now (with async components too: see Registry::Schedule).
 inline void ComponentBase::checkDependencies() const {
     for (std::size_t i = 0; i < needCount_; ++i) {
         const Need& need = needs_[i];
@@ -2040,22 +2242,234 @@ inline void Registry::deinitAll() noexcept {
     }
 }
 
+// Runs one phase (init or start) when some component runs it on its own thread.
+//
+// Every component of the App is a step. A step is ready when every step it is ordered
+// after is done. Each async component gets a thread when the phase begins, which waits
+// until its step is ready and runs it. The calling thread runs the other steps. When it
+// next picks a step, it takes the first ready one in init order that some async component
+// waits for (directly or through others), else the first ready one; it waits only when
+// none is ready.
+//
+// Synchronization: status_, errors_ and failed_ are read and written only with mutex_
+// held, except that run() reads errors_ after joining every thread. The other fields are
+// constant once the threads exist, or used by the calling thread only. A step marks
+// itself done under mutex_ after it returns, and a step starts only after reading, under
+// mutex_, that its dependencies are done. So everything a dependency's hook did (its
+// component's members, its state_) happens before its dependents' hooks run, on whichever
+// threads. Steps with no ordering path between them may run concurrently; keel's part of
+// a step writes only its own component's state_, and a component's lookups read only the
+// state_ of the components it is ordered after. (A hook that calls App::getComponent<T>()
+// on the App itself may read any component's state_: atomic, so not a data race, but the
+// answer depends on timing.)
+//
+// Failure: the first failure sets failed_. From then on no step starts; steps already
+// running finish. run() joins every thread, then rethrows the exception of the earliest
+// failed step in init order. A failed step stays `running`, and a skipped one `pending`:
+// only `done` lets anything continue. The destructor joins too, if run() didn't get that
+// far.
+// No deadlock: the graph is acyclic, so while nothing has failed, some pending step has
+// all its dependencies done, and the thread that runs it is woken by the last of them.
+class Registry::Schedule {
+public:
+    Schedule(Registry& registry, Phase phase)
+        : registry_(registry),
+          phase_(phase),
+          size_(registry.components_.size()),
+          async_(size_, 0),
+          feedsAsync_(size_, 0),
+          status_(size_, Status::pending),
+          errors_(size_) {
+        std::size_t asyncCount = 0;
+        for (std::size_t i = 0; i < size_; ++i) {
+            async_[i] = registry_.runsAsync(phase_, i) ? 1 : 0;
+            asyncCount += async_[i];
+        }
+        // Reverse init order: each dependent is visited before its dependencies.
+        for (std::size_t i = size_; i-- > 0;) {
+            if (async_[i] == 0 && feedsAsync_[i] == 0) continue;
+            for (std::size_t j : registry_.dependencies_[i]) feedsAsync_[j] = 1;
+        }
+        threads_.reserve(asyncCount);
+    }
+    Schedule(const Schedule&) = delete;
+    Schedule& operator=(const Schedule&) = delete;
+
+    // Nothing left to do after run() returned or rethrew a step's exception. If run() was
+    // left early by an exception of its own (std::mutex::lock can throw std::system_error),
+    // tells the waiting threads to give up and joins every thread, so none outlives the
+    // phase.
+    ~Schedule() {
+        {
+            const std::lock_guard lock(mutex_);
+            failed_ = true;
+        }
+        changed_.notify_all();
+        joinAll();
+    }
+
+    void run() {
+        for (std::size_t i = 0; i < size_; ++i) {
+            if (async_[i] == 0) continue;
+            try {
+                if (testHooks.beforeThread != nullptr) testHooks.beforeThread();
+                threads_.emplace_back([this, i] { runAsync(i); });
+            } catch (...) {  // std::system_error: no thread was created
+                // Recorded like a call that threw, so that timings() shows the failure.
+                registry_.record(phase_, *registry_.components_[i], std::chrono::steady_clock::now(), true);
+                finish(i, std::current_exception());
+                break;
+            }
+        }
+        runLocal();
+        joinAll();
+        for (const std::exception_ptr& error : errors_) {  // in init order
+            if (error) std::rethrow_exception(error);
+        }
+    }
+
+private:
+    enum class Status : unsigned char { pending, running, done };
+
+    // On the thread of async step i.
+    void runAsync(std::size_t i) {
+        {
+            std::unique_lock lock(mutex_);
+            changed_.wait(lock, [&] { return failed_ || ready(i); });
+            if (failed_) return;  // skipped: the phase is over
+            status_[i] = Status::running;
+        }
+        execute(i);
+    }
+
+    // On the calling thread: the steps that aren't async, until they are all done or a
+    // step failed.
+    void runLocal() {
+        std::size_t remaining = 0;
+        for (std::size_t i = 0; i < size_; ++i) remaining += async_[i] == 0 ? 1 : 0;
+        while (remaining > 0) {
+            std::size_t next = size_;
+            {
+                std::unique_lock lock(mutex_);
+                changed_.wait(lock, [&] {
+                    next = nextLocal();
+                    return failed_ || next != size_;
+                });
+                if (failed_) return;
+                status_[next] = Status::running;
+            }
+            --remaining;
+            execute(next);
+        }
+    }
+
+    // Runs step i on the current thread, then records the outcome and wakes the waiters.
+    void execute(std::size_t i) {
+        std::exception_ptr error;
+        try {
+            registry_.runOne(phase_, i);
+        } catch (...) {
+            error = std::current_exception();
+        }
+        finish(i, std::move(error));
+    }
+
+    void finish(std::size_t i, std::exception_ptr error) {
+        {
+            const std::lock_guard lock(mutex_);
+            if (error) {
+                errors_[i] = std::move(error);  // the status stays `running`
+                failed_ = true;
+            } else {
+                status_[i] = Status::done;
+            }
+        }
+        changed_.notify_all();
+    }
+
+    // With mutex_ held.
+    bool ready(std::size_t i) const {
+        for (std::size_t j : registry_.dependencies_[i]) {
+            if (status_[j] != Status::done) return false;
+        }
+        return true;
+    }
+    // With mutex_ held: the first ready pending step of the calling thread that an async
+    // step waits for, else the first ready one, else size_.
+    std::size_t nextLocal() const {
+        std::size_t first = size_;
+        for (std::size_t i = 0; i < size_; ++i) {
+            if (async_[i] != 0 || status_[i] != Status::pending || !ready(i)) continue;
+            if (feedsAsync_[i] != 0) return i;
+            if (first == size_) first = i;
+        }
+        return first;
+    }
+
+    void joinAll() {
+        for (std::thread& t : threads_) {
+            if (t.joinable()) t.join();
+        }
+    }
+
+    Registry& registry_;
+    const Phase phase_;
+    const std::size_t size_;
+    std::vector<unsigned char> async_;       // constant after construction
+    std::vector<unsigned char> feedsAsync_;  // constant after construction
+    std::vector<std::thread> threads_;       // used by the calling thread only
+
+    std::mutex mutex_;
+    std::condition_variable changed_;  // notified after each step finishes
+    std::vector<Status> status_;
+    std::vector<std::exception_ptr> errors_;
+    bool failed_ = false;
+};
+
+inline bool Registry::runsAsync(Phase phase, std::size_t i) const noexcept {
+    const ComponentBase& c = *components_[i];
+    if (phase == Phase::init) return c.asyncInit_;
+    return c.asyncStart_ && c.state_ != ComponentBase::State::disabled;  // a disabled one has nothing to run
+}
+
+inline void Registry::runOne(Phase phase, std::size_t i) {
+    ComponentBase& c = *components_[i];
+    if (phase == Phase::init) {
+        // Asked first: a component that opts out isn't checked, so a disabled feature may
+        // depend on another disabled one.
+        if (!c.enabled()) {
+            c.state_ = ComponentBase::State::disabled;
+            return;
+        }
+        c.checkDependencies();
+        timed(Phase::init, c, &ComponentBase::init);
+        c.state_ = ComponentBase::State::initialized;
+    } else {
+        if (c.state_ == ComponentBase::State::disabled) return;
+        timed(Phase::start, c, &ComponentBase::start);
+        c.state_ = ComponentBase::State::started;
+    }
+}
+
+inline void Registry::runPhase(Phase phase) {
+    bool anyAsync = false;
+    if (hasAsync_ && async_) {
+        for (std::size_t i = 0; i < components_.size(); ++i) anyAsync = anyAsync || runsAsync(phase, i);
+    }
+    if (!anyAsync) {  // everything on the calling thread, in init order
+        for (std::size_t i = 0; i < components_.size(); ++i) runOne(phase, i);
+        return;
+    }
+    Schedule schedule(*this, phase);
+    schedule.run();
+}
+
 inline void Registry::init() {
     if (state_ != State::building) throw Error("keel: init() can be called only once per App");
     timings_.reserve(4 * components_.size());  // see timed()
     state_ = State::failed;  // until proven otherwise
     try {
-        for (ComponentBase* c : components_) {
-            // Asked first: a component that opts out isn't checked, so a disabled feature may
-            // depend on another disabled one.
-            if (!c->enabled()) {
-                c->state_ = ComponentBase::State::disabled;
-                continue;
-            }
-            c->checkDependencies();
-            timed(Phase::init, *c, &ComponentBase::init);
-            c->state_ = ComponentBase::State::initialized;
-        }
+        runPhase(Phase::init);
     } catch (...) {
         deinitAll();  // roll back what was initialized, then report the init() failure
         throw;
@@ -2064,7 +2478,7 @@ inline void Registry::init() {
 }
 
 inline void Registry::start() {
-    switch (state_) {
+    switch (state_.load()) {
         case State::initialized:
             break;
         case State::building:
@@ -2079,11 +2493,7 @@ inline void Registry::start() {
     }
     state_ = State::failed;  // until proven otherwise
     try {
-        for (ComponentBase* c : components_) {
-            if (c->state_ == ComponentBase::State::disabled) continue;
-            timed(Phase::start, *c, &ComponentBase::start);
-            c->state_ = ComponentBase::State::started;
-        }
+        runPhase(Phase::start);
     } catch (...) {
         stopAll();  // roll back what was started, then everything initialized
         deinitAll();

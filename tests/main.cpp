@@ -4,6 +4,9 @@
 #include <exception>
 
 int main() {
+    // Unbuffered, so that if a test hangs and is killed (ctest TIMEOUT), the output shows
+    // which one.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     int failed = 0;
     for (const check::Case& c : check::cases()) {
         try {

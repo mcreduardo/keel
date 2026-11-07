@@ -216,8 +216,8 @@
   `std::array<std::string_view, N>`: the type names in init order, usable in a
   `static_assert` and without constructing the App. It includes disabled components
   (`enabled()` is asked at runtime); `timings()` shows what ran. Alternative (as in
-  `framework/`): a runtime `std::vector` of what was actually initialized. With async init
-  (milestone 11) it stays the dependency order; the order calls finish in is in `timings()`.
+  `framework/`): a runtime `std::vector` of what was actually initialized. With async
+  components it stays the dependency order; the order calls finish in is in `timings()`.
 
 - **Timings are always recorded.** Two `steady_clock::now()` per hook call, and one vector
   reserved by `init()` for every call an App can make (four per component), so recording
@@ -225,8 +225,10 @@
   injectable clock. `enabled()` and keel's own dependency checks aren't timed; a disabled
   component has no entries. A call that throws is recorded with `failed = true`, followed
   by the rollback's calls. Alternatives: opt-in (a flag or a template parameter); time
-  `enabled()` too; a user-supplied clock. Async init (milestone 11) will need a lock or
-  per-thread buffers.
+  `enabled()` too; a user-supplied clock. With async components, entries are appended under
+  a mutex in the order the calls finish (so an async call can appear after a later one in
+  init order). Alternative: per-thread buffers merged at the end (no lock, but an order to
+  define).
 
 - **`App::toDot()` draws the ordering edges.** One arrow per edge the init order is derived
   from, from the dependent to the dependency, styled by entry kind (required plain,
@@ -243,3 +245,62 @@
   arrows; not merged, since each shows one entry. Alternatives: a constexpr string; arrows from
   dependency to dependent (the init direction); leave disabled components out; show the
   missing `Optional` targets as dashed placeholders.
+
+- **Async: one thread per async component and phase, created when the phase begins.** It
+  waits for its dependencies itself, so a chain of async components never waits for the
+  calling thread. Alternatives: a thread pool (bounded threads, but a waiting step would hold
+  a pool thread, or the pool needs a ready queue); or creating the thread when the
+  component becomes ready (fewer idle threads, but only the calling thread could do that, so
+  an async component behind a busy calling thread would wait for it). Thread names, stack
+  sizes and affinity are not configurable.
+
+- **Async: the calling thread runs first what an async component waits for.** Among its
+  ready components it picks the first, in init order, that some async component waits for
+  (directly or through others), else the first ready one (2026-11-04 decision). No
+  priorities by duration or path length. So the relative order of components with no
+  dependency path between them is not fixed once some component is async; dependencies
+  always are. A phase without async components runs the plain loop in init order, exactly
+  as before (an app without any async component never reaches the scheduler: known at
+  compile time; nor does one after `setAsync(false)`).
+
+- **Async failure: the earliest failed component in init order is rethrown.** If several
+  init()s (or start()s) throw, the others' exceptions are dropped (each failure is still in
+  `timings()` with `failed`). Which components get to fail depends on timing, since nothing
+  new starts after the first failure, so the rethrown one can differ between runs. Alternatives: the first to fail in time (not reproducible); an
+  aggregate exception (changes the "rethrown unchanged" rule). A thread that can't be
+  created counts as a failure of its component (`std::system_error`, rethrown by the same
+  rule, recorded in `timings()` as a failed call of zero duration); the threads already
+  created are told to stop and joined. Tests simulate it through
+  `keel::detail::testHooks.beforeThread`, a function pointer in the header (tests only).
+
+- **Async: `start()` still begins after every `init()`.** An `AsyncStart` component can't
+  start before an unrelated slow `AsyncInit` finishes (lifecycle guarantee "when your
+  start() runs, every component has finished init()"). Alternative: one combined schedule
+  per component (init then start as soon as its dependencies have started). Not done:
+  weaker guarantee, harder rollback.
+
+- **Async: `enabled()` runs on the component's own thread** with `AsyncInit`, just before
+  its `init()`, after its dependencies are done (so it can use them, as for sync ones).
+  Alternative: ask every `enabled()` on the calling thread first; then it couldn't use
+  dependencies initialized asynchronously.
+
+- **Component and app state are atomic.** keel's own reads of a component's state are
+  ordered by the scheduler, but a lookup from a thread the component started itself (in
+  `start()`) used to race with keel writing the state. Atomic loads/stores (seq_cst) make
+  that well defined. They don't make such lookups meaningful during shutdown (still open:
+  design log 2026-11-03, "dependency access from threads during shutdown").
+
+- **`App::setAsync(false)` runs async components synchronously** (debugging, reproducible
+  tests, narrowing down a race): everything on the calling thread in init order. Before
+  `init()` only (after, `keel::Error`). Not reachable through `keel::run<AppType>`. erocha
+  may revisit the name (`setAsync`, `runAllOnCallingThread`, a compose-time option, ...).
+
+- **Async is a property of the whole app, not of one component** (to document in the README,
+  milestone 12, "Threads"): once any component is async, components with no dependency path
+  between them may run at the same time, sync ones included, so shared dependencies (a
+  Logger) must be thread-safe; init()/start() may run on worker threads while stop()/deinit()
+  run on the calling thread. Also in the README: linking. The CMake target links
+  `Threads::Threads`; users who copy the header without CMake need `-pthread` on Linux.
+
+- **Install/export (milestone 13):** `keelConfig.cmake` must call
+  `find_dependency(Threads)`.
