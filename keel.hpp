@@ -53,8 +53,9 @@ struct InitAfter {};
 /// Other components can then list Storage (or keel::Optional<Storage>, or
 /// keel::InitAfter<Storage>) and get the DiskStorage. A dependency on I needs exactly one
 /// provider of I in the app; with two, it is a compile error. keel::InitAfter<I> orders
-/// after every provider. Dependencies match by exact type: a component that derives from I
-/// without listing keel::Provides<I> is not found as I (and keel reports it).
+/// after every provider, and keel::All<I> uses every provider. Dependencies match by exact
+/// type: a component that derives from I without listing keel::Provides<I> is not found as
+/// I (and keel reports it).
 ///
 /// To substitute a subclass for a component (a fake in tests), the component provides
 /// itself, and its subclasses inherit that:
@@ -63,6 +64,21 @@ struct InitAfter {};
 ///   keel::compose<Service, FakeClock>();  // Service's dependency on Clock gets FakeClock
 template <class I>
 struct Provides {};
+
+/// Every component that provides the interface I (lists keel::Provides<I>, or is I
+/// itself), for plug-in style lists: health checks, routes, sensors. Use getAll<I>(), which
+/// returns them in init order (each after the ones it depends on). At least one must be
+/// composed, else it is a compile error (MissingProvider); write
+/// keel::Optional<keel::All<I>> if none is fine. Each provider is constructed and
+/// initialized before this component, and deinitialized and destroyed after it. A
+/// component that provides I itself is not part of its own list, nor is one that lists
+/// keel::All<I> and derives from I without providing it:
+///   class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> { ... };
+///   class Plugins : public keel::Component<keel::Optional<keel::All<Plugin>>> { ... };
+/// keel::All<keel::Optional<I>> is a compile error (MisnestedAll): write
+/// keel::Optional<keel::All<I>>.
+template <class I>
+struct All {};
 
 template <class... Dependencies>
 class Component;
@@ -132,17 +148,21 @@ struct MemberOf<R C::*> {
 };
 
 // How a component uses the type an entry of its keel::Component<...> list names.
-enum class Use { required, optional, ordering, provided };
+// `misnested` is All<Optional<I>>, which is reported at compose time.
+enum class Use { required, optional, ordering, provided, all, optionalAll, misnested };
 
 struct EmptySplit {
     using required = TypeList<>;
     using optional = TypeList<>;
     using initAfter = TypeList<>;
+    using all = TypeList<>;
+    using misnested = TypeList<>;
     using provides = TypeList<>;
 };
 
 // Separates the entries of a keel::Component<...> list by kind: required, optional,
-// ordering only, and provided interfaces. `target` is the type the entry names.
+// ordering only, collections (All<I>, Optional<All<I>>) and provided interfaces. `target`
+// is the type the entry names.
 template <class D>
 struct Split : EmptySplit {
     using required = TypeList<D>;
@@ -167,6 +187,25 @@ struct Split<Provides<I>> : EmptySplit {
     using target = I;
     static constexpr Use use = Use::provided;
 };
+template <class I>
+struct Split<All<I>> : EmptySplit {
+    using all = TypeList<I>;
+    using target = I;
+    static constexpr Use use = Use::all;
+};
+template <class I>
+struct Split<Optional<All<I>>> : EmptySplit {
+    using all = TypeList<I>;
+    using target = I;
+    static constexpr Use use = Use::optionalAll;
+};
+// Accessors accept I for it, so MisnestedAll is the one error.
+template <class I>
+struct Split<All<Optional<I>>> : EmptySplit {
+    using misnested = TypeList<I>;
+    using target = I;
+    static constexpr Use use = Use::misnested;
+};
 
 template <class T>
 inline constexpr bool isDependencyMarker = false;
@@ -176,10 +215,12 @@ template <class T>
 inline constexpr bool isDependencyMarker<InitAfter<T>> = true;
 template <class T>
 inline constexpr bool isDependencyMarker<Provides<T>> = true;
+template <class T>
+inline constexpr bool isDependencyMarker<All<T>> = true;
 
-// Optional<T> and InitAfter<T> may name a type that isn't composed, and Provides<T> an
-// interface, but it must be a type that could be one: a class, not const or volatile, not
-// another marker. Anything else would never match.
+// Optional<T>, InitAfter<T> and Optional<All<T>> may name a type that isn't composed, and
+// Provides<T> and All<T> an interface, but it must be a type that could be one: a class,
+// not const or volatile, not another marker. Anything else would never match.
 template <class T>
 inline constexpr bool couldBeComponent =
     std::is_class_v<T> && !std::is_const_v<T> && !std::is_volatile_v<T> && !isDependencyMarker<T>;
@@ -243,6 +284,7 @@ inline std::string concat(std::initializer_list<std::string_view> parts) {
 }
 
 class Registry;
+struct Binding;
 
 // ===========================================================================
 // Type-erased base of every component. Users derive from keel::Component<...>.
@@ -290,6 +332,12 @@ private:
 
     // The dependency with this id, or nullptr if it isn't composed and not required.
     void* lookup(TypeId id, std::string_view dependency, bool required) const;
+    // Every component bound to this id other than this one, in init order.
+    std::vector<void*> lookupAll(TypeId id, std::string_view dependency) const;
+    // Throws unless this component may use its dependencies now (from init() on).
+    void checkCanUse(std::string_view accessor, std::string_view dependency) const;
+    // The bound object, if its owner is usable; else throws.
+    void* use(const Binding& binding, std::string_view dependency) const;
 
     Registry* registry_ = nullptr;
     std::string_view name_;
@@ -316,7 +364,7 @@ public:
         base.registry_ = this;
         base.name_ = typeName<C>();
         components_.push_back(&base);
-        bindings_.emplace(typeId<C>(), Binding{&base, static_cast<void*>(&component)});
+        bindings_[typeId<C>()].push_back(Binding{&base, static_cast<void*>(&component)});
         bindInterfaces(component, base, typename C::ProvidedInterfaces{});
     }
 
@@ -328,9 +376,18 @@ public:
     /// init() was called: components may look up their dependencies.
     bool initCalled() const noexcept { return state_ != State::building; }
 
+    // The first component bound to id, or nullptr. A lookup of one dependency compiles only
+    // when id has exactly one provider, so then front() is the only binding.
     const Binding* find(TypeId id) const {
         auto it = bindings_.find(id);
-        return it == bindings_.end() ? nullptr : &it->second;
+        return it == bindings_.end() ? nullptr : &it->second.front();
+    }
+
+    // Every component bound to id, in init order (empty if none).
+    const std::vector<Binding>& findAll(TypeId id) const {
+        static const std::vector<Binding> none;
+        auto it = bindings_.find(id);
+        return it == bindings_.end() ? none : it->second;
     }
 
 private:
@@ -341,22 +398,22 @@ private:
     void stopAll() noexcept;
     void deinitAll() noexcept;
 
-    // Binds each interface C provides to C's subobject of that type. An interface with
-    // several providers keeps the first: the compile-time checks reject a lookup of it.
-    // (A Provides<I> that C can't be used as is reported at compile time and not bound.)
+    // Binds each interface C provides to C's subobject of that type, after the providers
+    // added before it. (A Provides<I> that C can't be used as is reported at compile time
+    // and not bound; a Provides<C> is already bound above.)
     template <class C, class... Is>
     void bindInterfaces([[maybe_unused]] C& component, [[maybe_unused]] ComponentBase& base, TypeList<Is...>) {
         (bindInterface<Is>(component, base), ...);
     }
     template <class I, class C>
     void bindInterface([[maybe_unused]] C& component, [[maybe_unused]] ComponentBase& base) {
-        if constexpr (implements<C, I>()) {
-            bindings_.emplace(typeId<I>(), Binding{&base, static_cast<void*>(static_cast<I*>(&component))});
+        if constexpr (implements<C, I>() && !std::is_same_v<C, I>) {
+            bindings_[typeId<I>()].push_back(Binding{&base, static_cast<void*>(static_cast<I*>(&component))});
         }
     }
 
     std::vector<ComponentBase*> components_;  // in init order
-    std::unordered_map<TypeId, Binding> bindings_;
+    std::unordered_map<TypeId, std::vector<Binding>> bindings_;  // each in init order
     State state_ = State::building;
 };
 
@@ -427,8 +484,29 @@ struct AmbiguousDependency {
     static_assert(singleProvider<Component, Interface, Providers>,
                   "keel: ambiguous dependency: the Component in AmbiguousDependency<Component, Interface, "
                   "TypeList<Providers...>> needs one Interface, and each of the Providers lists "
-                  "keel::Provides<Interface>. Compose only one of them, or depend on the one you want by its own "
-                  "type.");
+                  "keel::Provides<Interface>. Compose only one of them, depend on the one you want by its own "
+                  "type, or depend on keel::All<Interface> to use all of them.");
+};
+
+template <class Component, class Interface>
+inline constexpr bool anyProvider = false;  // only read when the check fails
+template <class Component, class Interface>
+struct MissingProvider {
+    static_assert(anyProvider<Component, Interface>,
+                  "keel: the Component in MissingProvider<Component, Interface> lists keel::All<Interface>, which "
+                  "needs at least one provider, and no composed component (other than Component itself) is or "
+                  "provides Interface. Compose one, or depend on keel::Optional<keel::All<Interface>> if none is "
+                  "fine.");
+};
+
+template <class Component, class Interface>
+inline constexpr bool wellNestedAll = false;  // only read when the check fails
+template <class Component, class Interface>
+struct MisnestedAll {
+    static_assert(wellNestedAll<Component, Interface>,
+                  "keel: the Component in MisnestedAll<Component, Interface> lists "
+                  "keel::All<keel::Optional<Interface>>; write keel::Optional<keel::All<Interface>> for a list "
+                  "that may be empty");
 };
 
 template <class Component, class T, class Derived>
@@ -452,6 +530,17 @@ struct UndeclaredSubclass {
                   "itself, or list keel::Provides<T> in T's own keel::Component<...> so its subclasses provide T.");
 };
 
+template <class Component, class T, class Derived>
+inline constexpr bool providerListed = false;  // only read when the check fails
+template <class Component, class T, class Derived>
+struct LeftOutOfAll {
+    static_assert(providerListed<Component, T, Derived>,
+                  "keel: the Component in LeftOutOfAll<Component, T, Derived> lists keel::All<T> (or "
+                  "keel::Optional<keel::All<T>>), and Derived derives from T but would be left out: keel matches "
+                  "exact types. List keel::Provides<T> in Derived's keel::Component<...> (for a subclass of the "
+                  "component T, in T's own list), or stop deriving from T.");
+};
+
 template <class Component, class Interface>
 inline constexpr bool derivesFromInterface = false;  // only read when the check fails
 template <class Component, class Interface>
@@ -468,9 +557,9 @@ template <class Component, class Entry>
 struct InvalidDependency {
     static_assert(validEntry<Component, Entry>,
                   "keel: the Component in InvalidDependency<Component, Entry> lists Entry (keel::Optional<T>, "
-                  "keel::InitAfter<T> or keel::Provides<T>), and T can never be a component or an interface: T "
-                  "must be a class type, not const/volatile, and not itself keel::Optional, keel::InitAfter or "
-                  "keel::Provides");
+                  "keel::InitAfter<T>, keel::Provides<T> or keel::All<T>), and T can never be a component or an "
+                  "interface: T must be a class type, not const/volatile, and not itself keel::Optional, "
+                  "keel::InitAfter, keel::Provides or keel::All");
 };
 
 template <class Cycle>
@@ -536,6 +625,10 @@ constexpr std::array<bool, N> componentsOnCycles(const Graph<N>& graph, const st
     return out;
 }
 
+// A dependency on T resolves to C: C is T, or lists keel::Provides<T>.
+template <class T, class C>
+inline constexpr bool isProvider = std::is_same_v<T, C> || contains<T, typename C::ProvidedInterfaces>;
+
 template <class List>
 struct Composition;
 
@@ -556,7 +649,7 @@ struct Composition<TypeList<Cs...>> {
     // Which components a dependency on T resolves to: T itself, and every component that
     // lists keel::Provides<T>.
     template <class T>
-    static constexpr Row providers{(std::is_same_v<T, Cs> || contains<T, typename Cs::ProvidedInterfaces>)...};
+    static constexpr Row providers{isProvider<T, Cs>...};
     template <class T>
     static constexpr std::size_t providerCount = count(providers<T>);
 
@@ -567,10 +660,14 @@ struct Composition<TypeList<Cs...>> {
     template <class T>
     using Providers = decltype(providersOf<T>(std::make_index_sequence<size>{}));
 
-    // The components other than C that derive from T: for a dependency of C on T that
-    // nothing provides, the likely intended providers.
+    // The providers of T other than C: what C's InitAfter<T> and All<T> refer to.
     template <class C, class T>
-    static constexpr Row derived{(!std::is_same_v<C, Cs> && implements<Cs, T>())...};
+    static constexpr Row others{(!std::is_same_v<C, Cs> && isProvider<T, Cs>)...};
+
+    // The components other than C that derive from T without being a provider of it: for a
+    // dependency of C on T, the likely forgotten keel::Provides<T>.
+    template <class C, class T>
+    static constexpr Row derived{(!std::is_same_v<C, Cs> && !isProvider<T, Cs> && implements<Cs, T>())...};
     template <class C, class T, std::size_t... Is>
     static auto derivedOf(std::index_sequence<Is...>)
         -> Concat<std::conditional_t<derived<C, T>[Is], TypeList<At<Is>>, TypeList<>>...>;
@@ -578,13 +675,17 @@ struct Composition<TypeList<Cs...>> {
     using Derived = decltype(derivedOf<C, T>(std::make_index_sequence<size>{}));
 
     // The check of one entry of C's keel::Component<...> list, as written (T, Optional<T>,
-    // InitAfter<T> or Provides<T>): a Passed<...> if fine, else the named failure (see
-    // above). Only the returned type is instantiated, so only a failure that is the mistake.
+    // InitAfter<T>, Provides<T>, All<T> or Optional<All<T>>): a Passed<...> if fine, else the
+    // named failure (see above). Only the returned type is instantiated, so only a failure
+    // that is the mistake.
     template <class C, class Entry>
     static auto check() {
         using T = typename Split<Entry>::target;
         constexpr Use use = Split<Entry>::use;
-        if constexpr (use != Use::required && !couldBeComponent<T>) {
+        constexpr bool collection = use == Use::all || use == Use::optionalAll;
+        if constexpr (use == Use::misnested) {
+            return MisnestedAll<C, T>{};
+        } else if constexpr (use != Use::required && !couldBeComponent<T>) {
             return InvalidDependency<C, Entry>{};
         } else if constexpr (use == Use::provided) {
             if constexpr (implements<C, T>()) {
@@ -592,16 +693,22 @@ struct Composition<TypeList<Cs...>> {
             } else {
                 return NotDerivedFromInterface<C, T>{};
             }
-        } else if constexpr (providerCount<T> == 0) {
+        } else if constexpr (providerCount<T> == 0 || collection) {
+            // Nothing is found as T, or, for All<T>, a component may be left out: one that
+            // derives from T without providing it is the likely mistake.
             using Subclass = FirstOr<Derived<C, T>, void>;
-            if constexpr (!std::is_void_v<Subclass> && derivesFromComponent<T>) {
+            if constexpr (!std::is_void_v<Subclass> && collection) {
+                return LeftOutOfAll<C, T, Subclass>{};
+            } else if constexpr (!std::is_void_v<Subclass> && derivesFromComponent<T>) {
                 return UndeclaredSubclass<C, T, Subclass>{};
             } else if constexpr (!std::is_void_v<Subclass>) {
                 return UndeclaredProvider<C, T, Subclass>{};
             } else if constexpr (use == Use::required) {
                 return MissingDependency<C, T>{};
+            } else if constexpr (use == Use::all && count(others<C, T>) == 0) {
+                return MissingProvider<C, T>{};
             } else {
-                return Passed<C, Entry>{};  // an absent optional or ordering-only dependency
+                return Passed<C, Entry>{};  // absent and optional or ordering only, or a collection
             }
         } else if constexpr (providerCount<T> > 1 && use != Use::ordering) {
             return AmbiguousDependency<C, T, Providers<T>>{};
@@ -614,17 +721,15 @@ struct Composition<TypeList<Cs...>> {
 
     // The components C is ordered after because of one entry: the provider of a dependency
     // (none if there are several: that is reported as ambiguous, not as a cycle too), and
-    // for InitAfter<T> every provider of T other than C itself.
-    template <class C>
-    static constexpr Row self{std::is_same_v<C, Cs>...};
+    // for InitAfter<T>, All<T> and Optional<All<T>> every provider of T other than C itself.
     template <class C, class Entry>
     static constexpr Row edgesOf() {
         using T = typename Split<Entry>::target;
         constexpr Use use = Split<Entry>::use;
         Row row{};
-        if constexpr (use == Use::ordering) {
-            for (std::size_t i = 0; i < size; ++i) row[i] = providers<T>[i] && !self<C>[i];
-        } else if constexpr (use != Use::provided && providerCount<T> <= 1) {
+        if constexpr (use == Use::ordering || use == Use::all || use == Use::optionalAll) {
+            row = others<C, T>;
+        } else if constexpr ((use == Use::required || use == Use::optional) && providerCount<T> <= 1) {
             row = providers<T>;
         }
         return row;
@@ -750,9 +855,11 @@ struct ListDiagnosis<ListInfo<Cs...>, std::index_sequence<Is...>>
 /// Base class of every component. List the components it uses, and the interfaces it
 /// implements:
 ///   class Exporter : public keel::Component<Aggregator, Logger, keel::Optional<Metrics>,
-///                                           keel::InitAfter<Migrations>, keel::Provides<Sink>>,
+///                                           keel::InitAfter<Migrations>, keel::All<Format>,
+///                                           keel::Provides<Sink>>,
 ///                    public Sink
-/// A dependency is a component, or an interface that one component Provides<>.
+/// A dependency is a component, or an interface that one component Provides<>
+/// (keel::All<I>: every component that Provides<I>).
 /// The listed types may be incomplete (forward-declared) in the header.
 template <class... Dependencies>
 class Component : public detail::ComponentBase {
@@ -760,37 +867,51 @@ public:
     using RequiredDependencies = detail::Concat<typename detail::Split<Dependencies>::required...>;
     using OptionalDependencies = detail::Concat<typename detail::Split<Dependencies>::optional...>;
     using InitAfterDependencies = detail::Concat<typename detail::Split<Dependencies>::initAfter...>;
-    using DeclaredDependencies = detail::Concat<RequiredDependencies, OptionalDependencies, InitAfterDependencies>;
+    using AllDependencies = detail::Concat<typename detail::Split<Dependencies>::all...>;  // also Optional<All<I>>
+    using MisnestedDependencies = detail::Concat<typename detail::Split<Dependencies>::misnested...>;
+    using DeclaredDependencies = detail::Concat<RequiredDependencies, OptionalDependencies, InitAfterDependencies,
+                                                AllDependencies, MisnestedDependencies>;
     using ProvidedInterfaces = detail::Concat<typename detail::Split<Dependencies>::provides...>;
     using Entries = detail::TypeList<Dependencies...>;  // as written
 
-    // T, Optional<T> and InitAfter<T> all name T, so listing two of them is a duplicate.
+    // T, Optional<T>, InitAfter<T>, All<T> and Optional<All<T>> all name T, so listing two
+    // of them is a duplicate.
     static constexpr bool uniqueDependencies = detail::UniqueList<DeclaredDependencies>::value;
     static constexpr bool uniqueInterfaces = detail::UniqueList<ProvidedInterfaces>::value;
     static constexpr bool uniqueEntries = uniqueDependencies && uniqueInterfaces;
+
+private:
+    // The accessor asserts on T run unless the list has a mistake that is the one error
+    // instead: a duplicate (see the constructor) or keel::All<keel::Optional<T>>
+    // (MisnestedAll, at compose time).
+    template <class T>
+    static constexpr bool checkedAccess = uniqueDependencies && !detail::contains<T, MisnestedDependencies>;
+
+public:
 
     // Checked here rather than in the class body: a failed check there would make the
     // derived class invalid, and every later use of it would add an error.
     Component() noexcept {
         static_assert(uniqueDependencies,
-                      "keel: a dependency is listed twice in keel::Component<...> (T, keel::Optional<T> and "
-                      "keel::InitAfter<T> count as the same)");
+                      "keel: a dependency is listed twice in keel::Component<...> (T, keel::Optional<T>, "
+                      "keel::InitAfter<T>, keel::All<T> and keel::Optional<keel::All<T>> count as the same)");
         static_assert(uniqueInterfaces, "keel: keel::Provides<I> is listed twice in keel::Component<...>");
     }
 
 protected:
     /// A required dependency. Compiles only if T is listed in keel::Component<...> as a
-    /// required dependency (not keel::Optional<T> or keel::InitAfter<T>). Usable from init()
-    /// on; resolve it there and keep the reference.
+    /// required dependency (not keel::Optional<T>, keel::InitAfter<T> or keel::All<T>).
+    /// Usable from init() on; resolve it there and keep the reference.
     template <class T>
     T& getComponent() const {
-        // At most one of these fails. With a duplicate in the list, none does: the duplicate
-        // is the one error (see the constructor).
-        if constexpr (uniqueDependencies) {
+        // At most one of these fails, and none if the list itself is wrong (checkedAccess).
+        if constexpr (checkedAccess<T>) {
             static_assert(!detail::contains<T, OptionalDependencies>,
                           "keel: T is declared keel::Optional<T>; use findComponent<T>(), which may return nullptr");
             static_assert(!detail::contains<T, InitAfterDependencies>,
                           "keel: T is declared keel::InitAfter<T>, which is ordering only; replace it with T to use T");
+            static_assert(!detail::contains<T, AllDependencies>,
+                          "keel: T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()");
             static_assert(detail::contains<T, DeclaredDependencies>,
                           "keel: getComponent<T>() requires T to be listed in this component's keel::Component<...>");
         }
@@ -803,17 +924,48 @@ protected:
     /// keep the pointer.
     template <class T>
     T* findComponent() const {
-        if constexpr (uniqueDependencies) {  // as in getComponent()
+        if constexpr (checkedAccess<T>) {  // as in getComponent()
             static_assert(!detail::contains<T, RequiredDependencies>,
                           "keel: T is a required dependency; use getComponent<T>(), which never returns nullptr");
             static_assert(!detail::contains<T, InitAfterDependencies>,
                           "keel: T is declared keel::InitAfter<T>, which is ordering only; replace it with "
                           "keel::Optional<T> to use T");
+            static_assert(!detail::contains<T, AllDependencies>,
+                          "keel: T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()");
             static_assert(detail::contains<T, DeclaredDependencies>,
                           "keel: findComponent<T>() requires keel::Optional<T> in this component's "
                           "keel::Component<...>");
         }
         return static_cast<T*>(lookup(detail::typeId<T>(), detail::typeName<T>(), false));
+    }
+
+    /// Every component that provides I (lists keel::Provides<I>, or is I itself), except
+    /// this one, in init order (each after the ones it depends on).
+    /// Never empty for keel::All<I>; possibly empty for keel::Optional<keel::All<I>>.
+    /// Compiles only if one of the two is listed in keel::Component<...>. Usable from init()
+    /// on (throws keel::Error before); resolve it there and keep the vector:
+    ///   for (HealthCheck* check : getAll<HealthCheck>()) { ... }
+    template <class I>
+    std::vector<I*> getAll() const {
+        if constexpr (checkedAccess<I>) {  // as in getComponent()
+            static_assert(!detail::contains<I, RequiredDependencies>,
+                          "keel: I is a required dependency (one provider); use getComponent<I>(), or replace it "
+                          "with keel::All<I> to use every provider");
+            static_assert(!detail::contains<I, OptionalDependencies>,
+                          "keel: I is declared keel::Optional<I> (at most one provider); use findComponent<I>(), or "
+                          "replace it with keel::Optional<keel::All<I>> to use every provider");
+            static_assert(!detail::contains<I, InitAfterDependencies>,
+                          "keel: I is declared keel::InitAfter<I>, which is ordering only; replace it with "
+                          "keel::All<I> (or keel::Optional<keel::All<I>>) to use I");
+            static_assert(detail::contains<I, DeclaredDependencies>,
+                          "keel: getAll<I>() requires keel::All<I> or keel::Optional<keel::All<I>> in this "
+                          "component's keel::Component<...>");
+        }
+        const std::vector<void*> found = lookupAll(detail::typeId<I>(), detail::typeName<I>());
+        std::vector<I*> out;
+        out.reserve(found.size());
+        for (void* p : found) out.push_back(static_cast<I*>(p));
+        return out;
     }
 };
 
@@ -1125,25 +1277,42 @@ auto run(R (C::*fn)() const, Args&&... args) {
 
 namespace detail {
 
-inline void* ComponentBase::lookup(TypeId id, std::string_view dependency, bool required) const {
+// The caller's own lifecycle is checked first, so a misplaced lookup fails whether or not
+// an optional dependency happens to be composed.
+inline void ComponentBase::checkCanUse(std::string_view accessor, std::string_view dependency) const {
     if (registry_ == nullptr) {
-        throw Error(concat({required ? "getComponent<" : "findComponent<", dependency,
+        throw Error(concat({accessor, "<", dependency,
                             ">() called before the component was part of an application (from its constructor?). "
                             "Dependencies are available from init() on."}));
     }
-    // The caller's own lifecycle first, so a misplaced lookup fails whether or not an
-    // optional dependency happens to be composed.
     if (!registry_->initCalled()) throw Error(concat({name_, " used ", dependency, " before init()"}));
     if (state_ == State::deinitialized) throw Error(concat({name_, " used ", dependency, " after its deinit()"}));
+}
+
+inline void* ComponentBase::lookup(TypeId id, std::string_view dependency, bool required) const {
+    checkCanUse(required ? "getComponent" : "findComponent", dependency);
     const Binding* b = registry_->find(id);
     if (b == nullptr) {
         if (!required) return nullptr;
         throw Error(concat({name_, " uses ", dependency, ", which is not part of the application"}));
     }
-    switch (b->owner->state_) {
+    return use(*b, dependency);
+}
+
+inline std::vector<void*> ComponentBase::lookupAll(TypeId id, std::string_view dependency) const {
+    checkCanUse("getAll", dependency);
+    std::vector<void*> out;
+    for (const Binding& b : registry_->findAll(id)) {
+        if (b.owner != this) out.push_back(use(b, dependency));
+    }
+    return out;
+}
+
+inline void* ComponentBase::use(const Binding& b, std::string_view dependency) const {
+    switch (b.owner->state_) {
         case State::initialized:
         case State::started:
-            return b->object;
+            return b.object;
         case State::created:
             throw Error(concat({name_, " used ", dependency, " before it was initialized"}));
         case State::deinitialized:

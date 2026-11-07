@@ -39,6 +39,14 @@
   (`InitAfter<std::string>`, or a forgotten compose), and an I that a composed class derives
   from twice (non-virtual diamond: not convertible, so no UndeclaredProvider, and
   `Optional<I>` stays nullptr).
+  For `All<I>` and `Optional<All<I>>` a similar check runs even when I has providers:
+  `LeftOutOfAll<C, I, Derived>`, because a composed class that derives from I without
+  providing it would silently be left out of the list. (For a single dependency with one
+  provider it doesn't: the dependency resolves, and the other class may be unrelated.) There
+  is no opt-out: a component that derives from I for unrelated reasons can't stay out of
+  `All<I>` except by not deriving from I. The collecting component itself is exempt: one
+  that lists `All<I>` and derives from I without providing it is accepted (and not in its
+  own list).
 
 - **`InitAfter<I>` with several providers orders after all of them.** A required or
   `Optional<I>` dependency with two providers is an ambiguity error
@@ -55,8 +63,35 @@
   This will conflict with `Alternative<I>` (milestone 8), where the provider is chosen at
   runtime. Revisit then.
 
-- **The ambiguity messages don't mention `All<I>` / `Alternative<I>` yet.** The framework's
-  message suggested them; add the hints when they exist (milestones 7 and 8).
+- **The ambiguity message doesn't mention `Alternative<I>` yet.** It suggests `All<I>`;
+  add the `Alternative<I>` hint in milestone 8.
+
+- **`All<I>` leaves out the component itself.** A component that provides I and lists
+  `All<I>` (a composite: a HealthCheck that checks all the others) gets every other
+  provider, and is ordered after them; "at least one" counts the others. Same rule as
+  `InitAfter<I>`. Alternative: report it as a cycle, like `Component<Provides<I>, I>`.
+  Not obvious consequences, reported only as `DependencyCycle<...>`: two composites of the
+  same I each come after the other (compile-fail test `two_composites`); and a subclass of
+  a composite (`Y : X` with `X : Component<Provides<I>, All<I>>`) inherits both entries, so
+  X and Y each come after the other. A dedicated message could explain these.
+
+- **One entry per type, collections included.** T, `Optional<T>`, `InitAfter<T>`, `All<T>`
+  and `Optional<All<T>>` all name T, so listing two of them is the duplicate error. Each
+  entry decides the one accessor (getComponent, findComponent, getAll). Alternative: allow
+  combinations such as `T, All<T>`; none adds anything the single entries can't express.
+
+- **`getAll<I>()` returns a new `std::vector<I*>` per call.** Simple, and the documented
+  use is to call it once in `init()` and keep it. Alternative: a `std::span` over a list
+  the registry keeps per interface (no allocation, but the pointers would have to be stored
+  per interface type, not as `void*`).
+
+- **`All<Optional<I>>` is `MisnestedAll<C, I>`.** The accessors skip their checks for that
+  I, so a getComponent/findComponent/getAll on it adds no second error. Other nestings
+  (`All<const I>`, `All<InitAfter<I>>`, `Optional<All<Optional<I>>>`) are
+  `InvalidDependency<C, Entry>`.
+
+- **No `App::getAll<I>()` at the composition root.** The root gets one component by type;
+  nothing needs the list there yet. Add it if an example does.
 
 - **`start()` runs once per App.** After `stop()` the app can only be deinitialized;
   `start()` again throws `keel::Error`. Alternative: allow stop/start cycles (restart
@@ -88,3 +123,8 @@
   (MSVC's limit is lower), so a large app with a cycle gets a step-limit error instead of
   `DependencyCycle<...>`. The normal path is O(N²). A strongly-connected-components pass
   (Tarjan, O(N²) on the matrix) would fix it.
+
+- **Large apps on MSVC may need `/constexpr:steps1000000`.** The order is computed at
+  compile time; the 150-component test needs about 511k clang constexpr steps (nearly all in
+  `topologicalOrder`), above MSVC's default of about 100k. The tests set the flag; the
+  docs must mention it (milestone 12). Alternative: a cheaper sort.

@@ -273,12 +273,18 @@ TEST(a_component_that_provides_itself_can_be_replaced_by_a_subclass) {
 
 // ---------------------------------------------------------------------------
 // A larger app: 150 components with up to 5 dependencies each, listed backwards. Part<0>
-// provides an interface that every other part orders after.
+// provides an interface that every other part orders after, and every part provides
+// another one, which Census lists with keel::All.
 
 namespace {
 
 struct Node {
     virtual ~Node() = default;
+};
+
+struct Counted {
+    virtual ~Counted() = default;
+    virtual int number() const = 0;
 };
 
 constexpr int appSize = 150;
@@ -290,30 +296,42 @@ class Part;
 template <int N>
 struct PartBase {
     using type = keel::Component<Part<N - 1>, Part<N - 2>, Part<N - 3>, keel::Optional<Part<N - 4>>,
-                                 keel::InitAfter<Node>>;
+                                 keel::InitAfter<Node>, keel::Provides<Counted>>;
 };
 template <>
 struct PartBase<0> {
-    using type = keel::Component<keel::Provides<Node>>;
+    using type = keel::Component<keel::Provides<Node>, keel::Provides<Counted>>;
 };
 template <>
 struct PartBase<1> {
-    using type = keel::Component<Part<0>, keel::InitAfter<Node>>;
+    using type = keel::Component<Part<0>, keel::InitAfter<Node>, keel::Provides<Counted>>;
 };
 template <>
 struct PartBase<2> {
-    using type = keel::Component<Part<1>, Part<0>, keel::InitAfter<Node>>;
+    using type = keel::Component<Part<1>, Part<0>, keel::InitAfter<Node>, keel::Provides<Counted>>;
 };
 template <>
 struct PartBase<3> {
-    using type = keel::Component<Part<2>, Part<1>, Part<0>, keel::InitAfter<Node>>;
+    using type = keel::Component<Part<2>, Part<1>, Part<0>, keel::InitAfter<Node>, keel::Provides<Counted>>;
 };
 
 template <int N>
-class Part : public PartBase<N>::type, public Node {};
+class Part : public PartBase<N>::type, public Node, public Counted {
+public:
+    int number() const override { return N; }
+};
+
+class Census : public keel::Component<keel::All<Counted>> {
+public:
+    std::vector<int> numbers() const {
+        std::vector<int> out;
+        for (const Counted* part : getAll<Counted>()) out.push_back(part->number());
+        return out;
+    }
+};
 
 template <std::size_t... Is>
-auto reversedParts(std::index_sequence<Is...>) -> keel::App<Part<appSize - 1 - static_cast<int>(Is)>...>;
+auto reversedParts(std::index_sequence<Is...>) -> keel::App<Census, Part<appSize - 1 - static_cast<int>(Is)>...>;
 using LargeApp = decltype(reversedParts(std::make_index_sequence<appSize>{}));
 
 }  // namespace
@@ -321,5 +339,9 @@ using LargeApp = decltype(reversedParts(std::make_index_sequence<appSize>{}));
 TEST(a_large_app_composes) {
     LargeApp app;
     app.init();
+    // Every part, in dependency order: Part<N> comes after Part<N-1>.
+    std::vector<int> expected;
+    for (int n = 0; n < appSize; ++n) expected.push_back(n);
+    CHECK(app.getComponent<Census>().numbers() == expected);
     app.deinit();
 }
