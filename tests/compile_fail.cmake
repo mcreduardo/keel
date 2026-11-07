@@ -19,6 +19,9 @@ execute_process(
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
     ERROR_VARIABLE output)
+# Colored diagnostics (CMAKE_COLOR_DIAGNOSTICS) put escape sequences inside the messages.
+string(ASCII 27 escape)
+string(REGEX REPLACE "${escape}\\[[0-9;]*[mK]" "" output "${output}")
 
 if(result EQUAL 0)
     message(FATAL_ERROR "${TARGET} compiled, but it must not")

@@ -306,5 +306,11 @@
   messages are available, put the type names first in each message ("Migrations needs
   Database, which isn't composed") instead of the template parameter names.
 
-- **Install/export (milestone 13):** `keelConfig.cmake` must call
-  `find_dependency(Threads)`.
+- **Install/export: `find_package(keel CONFIG)`, SameMinorVersion.** Install rules
+  (`KEEL_INSTALL`, on when top-level) install `keel.hpp` to `include/` and the exported
+  `keel::keel` target with `keelConfig.cmake` (`find_dependency(Threads)`) and
+  `keelConfigVersion.cmake` under `share/cmake/keel` (header-only: `ARCH_INDEPENDENT`).
+  Version compatibility is `SameMinorVersion`: before 1.0 a minor version may break the API,
+  so `find_package(keel 0.1)` accepts 0.1.x only. Alternatives: `SameMajorVersion` (would
+  accept 0.2 for 0.1, wrong for 0.x), `AnyNewerVersion` (same problem, worse). Switch to
+  `SameMajorVersion` at 1.0. CI installs and builds `tests/install_consumer` against it.

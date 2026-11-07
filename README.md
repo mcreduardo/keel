@@ -1,5 +1,7 @@
 # keel
 
+[![CI](https://github.com/mcreduardo/keel/actions/workflows/ci.yml/badge.svg)](https://github.com/mcreduardo/keel/actions/workflows/ci.yml)
+
 **Structure for C++ applications: components with declared dependencies, a composition
 checked by the compiler, and startup and shutdown order computed for you.**
 
@@ -168,21 +170,39 @@ top; the CMake build compiles all of them and runs them as tests.
 
 - A C++20 compiler and standard library. No other dependencies. No RTTI needed;
   exceptions are used for errors.
-- Tested with **Apple clang 17** on macOS. Not yet tried with GCC or MSVC.
+- Developed with Apple clang 17 on macOS. CI builds and runs the tests with GCC 11 and 14,
+  Clang 15 and 21 (Ubuntu 24.04), Apple clang (macOS) and MSVC (Windows), in Debug and
+  Release, plus AddressSanitizer + UndefinedBehaviorSanitizer and ThreadSanitizer builds
+  (Clang 18); see [the workflow](.github/workflows/ci.yml).
+- CMake 3.21 or newer to build the tests or use the CMake target.
 - MSVC's default constexpr step limit is about ten times lower than Clang's, so large
   compositions (around a hundred components or more) will likely need
   `/constexpr:steps1000000` there. More in [platform notes](docs/reference.md#requirements-and-platform-notes).
 
 ## Using keel
 
-With CMake:
+With CMake, as a subdirectory or with `FetchContent`:
 
 ```cmake
-add_subdirectory(keel)  # or FetchContent
+add_subdirectory(keel)
 target_link_libraries(app PRIVATE keel::keel)
 ```
 
-Or copy [`keel.hpp`](keel.hpp) into your project and include it.
+Or install it and use `find_package`:
+
+```sh
+cmake -S keel -B keel-build
+cmake --install keel-build --prefix /opt/keel
+```
+
+```cmake
+find_package(keel 0.1 CONFIG REQUIRED)  # with -DCMAKE_PREFIX_PATH=/opt/keel
+target_link_libraries(app PRIVATE keel::keel)
+```
+
+The installed package accepts the same minor version only (0.1.x for `0.1`): before 1.0, a
+new minor version may change the API. Or copy [`keel.hpp`](keel.hpp) into your project and
+include it.
 
 **Threads.** keel runs `AsyncInit`/`AsyncStart` components on threads of their own, so it
 uses `std::thread`. The `keel::keel` target links `Threads::Threads`; without CMake, compile
@@ -200,8 +220,12 @@ ctest --test-dir build
 
 The tests include compile-fail tests: programs that must not compile, each checked for the
 expected diagnostic and for exactly one error. `-DKEEL_BUILD_TESTS=OFF` and
-`-DKEEL_BUILD_EXAMPLES=OFF` turn the two parts off (both are on when keel is the top-level
-project, off when it is added as a subdirectory).
+`-DKEEL_BUILD_EXAMPLES=OFF` turn the two parts off, and `-DKEEL_INSTALL=OFF` the install
+rules (all three are on when keel is the top-level project, off when it is added as a
+subdirectory). Sanitizer builds pass their flags through `CMAKE_CXX_FLAGS` and
+`CMAKE_EXE_LINKER_FLAGS`, as the CI workflow does.
+
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

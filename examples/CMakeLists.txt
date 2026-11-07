@@ -8,7 +8,7 @@ function(keel_example name)
     set_target_properties(keel_example_${name} PROPERTIES OUTPUT_NAME ${name})
     target_link_libraries(keel_example_${name} PRIVATE keel::keel)
     if(MSVC)
-        target_compile_options(keel_example_${name} PRIVATE /W4 /permissive-)
+        target_compile_options(keel_example_${name} PRIVATE /W4 /permissive- /constexpr:steps1000000)
     else()
         target_compile_options(keel_example_${name} PRIVATE -Wall -Wextra -Wpedantic)
     endif()
@@ -72,6 +72,9 @@ function(keel_example_error number pattern)
     add_library(${target} OBJECT EXCLUDE_FROM_ALL compile_errors.cpp)
     target_compile_definitions(${target} PRIVATE KEEL_ERROR=${number})
     target_link_libraries(${target} PRIVATE keel::keel)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /constexpr:steps1000000)
+    endif()
     add_test(NAME example.compile_errors.${number}
              COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${CMAKE_BINARY_DIR} -DTARGET=${target} -DCONFIG=$<CONFIG>
                      "-DPATTERN=${pattern}" -DCOUNT_ERRORS=${count_errors} -DERRORS=1

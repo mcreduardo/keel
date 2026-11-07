@@ -188,6 +188,6 @@ by configuration instead, see [Decisions at runtime](runtime-decisions.md).
 ## Large compositions
 
 The init order is computed at compile time, in O(n²) for n components. keel's tests
-compose 150 components within Clang's default limits. keel hasn't been tried with MSVC yet;
-its default constexpr step limit is about ten times lower than Clang's, so compositions of
-around a hundred components or more will likely need `/constexpr:steps1000000` there.
+compose 150 components within Clang's default limits. MSVC's default constexpr step limit
+is about ten times lower than Clang's, so compositions of around a hundred components or
+more will likely need `/constexpr:steps1000000` there (keel's own tests set it).

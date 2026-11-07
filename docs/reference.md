@@ -103,7 +103,8 @@ Details: [Lifecycle](lifecycle.md), [Inspecting and testing](inspection-and-test
 ## Requirements and platform notes
 
 - **C++20.** Exceptions are required (keel reports runtime errors by throwing); RTTI is not.
-- **Tested with Apple clang 17** (macOS). Not yet tried with GCC, MSVC, or Clang on Linux.
+- **Compilers.** Developed with Apple clang 17 (macOS). CI builds with GCC 11 and 14,
+  Clang 15 and 21 (Linux), Apple clang and MSVC; see the README's Requirements.
 - **Threads.** The CMake target `keel::keel` links `Threads::Threads`. Copying the header
   without CMake, compile and link with `-pthread` on Linux.
 - **MSVC and large compositions.** The init order is computed at compile time. MSVC's
@@ -112,8 +113,12 @@ Details: [Lifecycle](lifecycle.md), [Inspecting and testing](inspection-and-test
 - **Names differ by compiler.** `keel::typeName<T>()`, `initOrder()`, `Timing::component`,
   `toDot()` and error messages use the type name as the compiler spells it: anonymous
   namespaces, template arguments and spacing vary between Clang, GCC and MSVC.
-- **CMake.** Use `add_subdirectory` or `FetchContent`; there are no install rules, so
-  no `find_package(keel)`.
+- **CMake.** Use `add_subdirectory` or `FetchContent`, or install keel and use
+  `find_package(keel CONFIG)`; either way, link `keel::keel`. The installed package accepts
+  the same minor version only (before 1.0, a new minor version may change the API).
+  `KEEL_INSTALL` is off when keel is a subdirectory, so a parent project that
+  `install(EXPORT)`s a target linking `keel::keel` must set `KEEL_INSTALL=ON`, or CMake
+  reports that keel is "not in any export set".
 
 ## Limitations
 

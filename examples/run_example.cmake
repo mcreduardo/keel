@@ -11,6 +11,7 @@ execute_process(
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
     ERROR_VARIABLE output)
+string(REPLACE "\r\n" "\n" output "${output}")  # Windows text-mode output
 
 if(NOT result STREQUAL "${EXIT}")
     message(FATAL_ERROR "${EXE} ${arguments}: exit code ${result}, expected ${EXIT}:\n${output}")

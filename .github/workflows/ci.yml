@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CMAKE_COLOR_DIAGNOSTICS: ON
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: ${{ matrix.name }} ${{ matrix.build_type }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: GCC 11, os: ubuntu-24.04, cxx: g++-11, apt: g++-11, build_type: Debug }
+          - { name: GCC 14, os: ubuntu-24.04, cxx: g++-14, apt: g++-14, build_type: Debug }
+          - { name: GCC 14, os: ubuntu-24.04, cxx: g++-14, apt: g++-14, build_type: Release }
+          - { name: Clang 15, os: ubuntu-22.04, cxx: clang++-15, apt: clang-15, build_type: Debug }
+          - { name: Clang 21, os: ubuntu-24.04, cxx: clang++-21, llvm: 21, build_type: Debug }
+          - { name: Clang 21, os: ubuntu-24.04, cxx: clang++-21, llvm: 21, build_type: Release }
+          - { name: Apple clang, os: macos-latest, cxx: clang++, build_type: Debug }
+          - { name: Apple clang, os: macos-latest, cxx: clang++, build_type: Release }
+          - { name: MSVC, os: windows-latest, cxx: cl, build_type: Debug }
+          - { name: MSVC, os: windows-latest, cxx: cl, build_type: Release }
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install compiler and Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ${{ matrix.apt }}
+
+      - name: Install Clang ${{ matrix.llvm }} from apt.llvm.org
+        if: matrix.llvm
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh ${{ matrix.llvm }}
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Set up the MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel 4 --timeout 300
+
+      - name: Install and build a find_package consumer
+        run: |
+          cmake --install build --prefix "$RUNNER_TEMP/keel-install"
+          cmake -S tests/install_consumer -B consumer-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/keel-install"
+          cmake --build consumer-build
+          ./consumer-build/consumer
+
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan + UBSan (Clang 18)
+            flags: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          - name: TSan (Clang 18)
+            flags: -fsanitize=thread
+    env:
+      ASAN_OPTIONS: detect_leaks=1:strict_init_order=1:detect_stack_use_after_return=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      # Sanitizer runtimes of this LLVM version can't handle the runner kernel's default
+      # mmap randomization ("unexpected memory mapping").
+      - name: Reduce mmap randomization
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=clang++-18
+          "-DCMAKE_CXX_FLAGS=${{ matrix.flags }} -g"
+          "-DCMAKE_EXE_LINKER_FLAGS=${{ matrix.flags }}"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      # The compile-fail tests only check diagnostics; they gain nothing from a sanitizer.
+      - name: Test
+        run: >
+          ctest --test-dir build --output-on-failure --parallel 4 --timeout 600
+          --exclude-regex "^(compile_fail\.|example\.compile_errors\.[0-9])"
