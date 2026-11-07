@@ -3,6 +3,7 @@ add_executable(keel_tests
     error_test.cpp
     compose_test.cpp
     lifecycle_test.cpp
+    optional_test.cpp
 )
 target_link_libraries(keel_tests PRIVATE keel::keel)
 if(MSVC)
@@ -31,7 +32,7 @@ function(keel_compile_fail name pattern)
     target_link_libraries(${name} PRIVATE keel::keel)
     add_test(NAME compile_fail.${name}
              COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${CMAKE_BINARY_DIR} -DTARGET=${name} -DCONFIG=$<CONFIG>
-                     -DPATTERN=${pattern} -DCOUNT_ERRORS=${KEEL_COUNT_ERRORS} -DERRORS=${errors}
+                     "-DPATTERN=${pattern}" -DCOUNT_ERRORS=${KEEL_COUNT_ERRORS} -DERRORS=${errors}
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/compile_fail.cmake)
     set_tests_properties(compile_fail.${name} PROPERTIES RESOURCE_LOCK keel_build_tree)
 endfunction()
@@ -48,3 +49,10 @@ keel_compile_fail(not_a_component "NotAComponent<Settings>")
 keel_compile_fail(private_component "NotAComponent<Hidden>")
 keel_compile_fail(abstract_component "AbstractComponent<Sink>")
 keel_compile_fail(throwing_deinit "exception specification")
+keel_compile_fail(get_component_on_optional "T is declared keel::Optional<T>; use findComponent<T>")
+keel_compile_fail(undeclared_optional "findComponent<T>\\(\\) requires keel::Optional<T>")
+keel_compile_fail(required_and_optional "a dependency is listed twice")
+keel_compile_fail(find_component_on_required "T is a required dependency; use getComponent<T>")
+keel_compile_fail(nested_optional "InvalidOptional<Server, ?keel::Optional<Metrics> ?>")
+keel_compile_fail(const_optional "InvalidOptional<Server, ?const Metrics>")
+keel_compile_fail(optional_cycle "DependencyCycle<keel::detail::TypeList<Store, ?Cache> ?>")

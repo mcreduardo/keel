@@ -22,3 +22,8 @@
   at compile time: every component comes after its dependencies, nothing is missing or
   listed twice. A wrong order fails compilation with an error that names the components
   involved; keel never reorders the list.
+
+- **An optional dependency on a base class is never found.** `keel::Optional<IMetrics>`
+  with only `PrometheusMetrics : IMetrics` composed compiles and returns nullptr, because
+  components are matched by exact type. Revisit with interfaces (`Provides<I>`); a check
+  for "a composed component derives from T" would need T to be complete.
