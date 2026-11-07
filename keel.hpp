@@ -28,12 +28,20 @@ public:
 };
 
 /// Marks a dependency in keel::Component<...> as optional: the component works without
-/// it. If T is also in the app's keel::compose<...> list, keel initializes it before this
-/// component and findComponent<T>() returns it; otherwise findComponent<T>() returns
-/// nullptr. Use findComponent<T>(), not getComponent<T>(). When T is composed, the
-/// dependency counts like a required one: a cycle through it is a compile error.
+/// it. If T is also in the app's keel::compose<...> list, keel constructs and initializes
+/// it before this component (and deinitializes and destroys it after), and
+/// findComponent<T>() returns it; otherwise findComponent<T>() returns nullptr. Use
+/// findComponent<T>(), not getComponent<T>(). When T is composed, the dependency counts
+/// like a required one: a cycle through it is a compile error.
 template <class T>
 struct Optional {};
+
+/// Ordering only: if T is also in the app's keel::compose<...> list, this component is
+/// constructed and initialized after T, and deinitialized and destroyed before it. It gives
+/// no access to T; list T (or keel::Optional<T>) instead to use it. If T isn't composed,
+/// nothing happens, and nothing reports it.
+template <class T>
+struct InitAfter {};
 
 template <class... Dependencies>
 class Component;
@@ -81,22 +89,33 @@ using Concat = typename ConcatImpl<Lists...>::type;
 template <class T>
 inline constexpr bool alwaysFalse = false;
 
-// Separates the entries of a keel::Component<...> list into required and optional.
-template <class D>
-struct Split {
-    using required = TypeList<D>;
+struct EmptySplit {
+    using required = TypeList<>;
     using optional = TypeList<>;
+    using initAfter = TypeList<>;
+};
+
+// Separates the entries of a keel::Component<...> list by kind: required, optional, and
+// ordering only.
+template <class D>
+struct Split : EmptySplit {
+    using required = TypeList<D>;
 };
 template <class T>
-struct Split<Optional<T>> {
-    using required = TypeList<>;
+struct Split<Optional<T>> : EmptySplit {
     using optional = TypeList<T>;
+};
+template <class T>
+struct Split<InitAfter<T>> : EmptySplit {
+    using initAfter = TypeList<T>;
 };
 
 template <class T>
-inline constexpr bool isOptionalMarker = false;
+inline constexpr bool isDependencyMarker = false;
 template <class T>
-inline constexpr bool isOptionalMarker<Optional<T>> = true;
+inline constexpr bool isDependencyMarker<Optional<T>> = true;
+template <class T>
+inline constexpr bool isDependencyMarker<InitAfter<T>> = true;
 
 /// Human-readable type name at compile time, without RTTI.
 template <class T>
@@ -280,20 +299,27 @@ struct MissingDependency {
                   "Dependency, and it is not composed.");
 };
 
-// Optional<T> must name a component type exactly as composed: a class, not const or
-// volatile, not another Optional. Anything else would never be found.
-template <class Component, class T>
-inline constexpr bool validOptional = false;  // only read when the check fails
-template <class Component, class T>
-struct InvalidOptional {
-    static_assert(validOptional<Component, T>,
-                  "keel: the Component in InvalidOptional<Component, T> lists keel::Optional<T>, and T can never be "
-                  "a component: T must be a class type, not const/volatile, and not itself keel::Optional<...>");
+// Optional<T> and InitAfter<T> may name a type that isn't composed, but it must be one that
+// could be: a class, not const or volatile, not another marker. Anything else would never
+// match a component.
+template <class T>
+inline constexpr bool couldBeComponent =
+    std::is_class_v<T> && !std::is_const_v<T> && !std::is_volatile_v<T> && !isDependencyMarker<T>;
+
+template <class Component, class Entry>
+inline constexpr bool validEntry = false;  // only read when the check fails
+template <class Component, class Entry>
+struct InvalidDependency {
+    static_assert(validEntry<Component, Entry>,
+                  "keel: the Component in InvalidDependency<Component, Entry> lists Entry (keel::Optional<T> or "
+                  "keel::InitAfter<T>), and T can never be a component: T must be a class type, not "
+                  "const/volatile, and not itself keel::Optional or keel::InitAfter");
 };
 
-template <class T>
-inline constexpr bool validOptionalType =
-    std::is_class_v<T> && !std::is_const_v<T> && !std::is_volatile_v<T> && !isOptionalMarker<T>;
+// The check of an Optional<T> or InitAfter<T> entry: Passed, or InvalidDependency naming it.
+template <class C, template <class> class Marker, class T>
+using MarkerCheck =
+    std::conditional_t<couldBeComponent<T>, Passed<C, Marker<T>>, InvalidDependency<C, Marker<T>>>;
 
 template <class Cycle>
 inline constexpr bool acyclic = false;
@@ -380,10 +406,6 @@ struct Composition<TypeList<Cs...>> {
     template <class C, class R>
     using RequiredCheck = std::conditional_t<(providerCount<R> > 0), Passed<C, R>, MissingDependency<C, R>>;
 
-    // An optional dependency may be absent, but it must be a type that could be composed.
-    template <class C, class O>
-    using OptionalCheck = std::conditional_t<validOptionalType<O>, Passed<C, Optional<O>>, InvalidOptional<C, O>>;
-
     template <class... Rs>
     static constexpr std::array<bool, size> edges(TypeList<Rs...>) {
         std::array<bool, size> row{};
@@ -394,7 +416,7 @@ struct Composition<TypeList<Cs...>> {
         return row;
     }
 
-    // An optional dependency that is composed orders like a required one.
+    // Every listed dependency that is composed orders like a required one.
     static constexpr Graph<size> graph{edges(typename Cs::DeclaredDependencies{})...};
     static constexpr TopologicalOrder<size> order = topologicalOrder(graph);
     static constexpr bool acyclic = order.count == size;
@@ -416,11 +438,11 @@ struct Composition<TypeList<Cs...>> {
 
 // All checks of one component C, as bases: only a failing one has a static_assert.
 template <class Info, class C, class Required = typename C::RequiredDependencies,
-          class Optionals = typename C::OptionalDependencies>
+          class Optionals = typename C::OptionalDependencies, class After = typename C::InitAfterDependencies>
 struct ComponentDiagnosis;
-template <class Info, class C, class... Rs, class... Os>
-struct ComponentDiagnosis<Info, C, TypeList<Rs...>, TypeList<Os...>>
-    : Info::template RequiredCheck<C, Rs>..., Info::template OptionalCheck<C, Os>... {};
+template <class Info, class C, class... Rs, class... Os, class... As>
+struct ComponentDiagnosis<Info, C, TypeList<Rs...>, TypeList<Os...>, TypeList<As...>>
+    : Info::template RequiredCheck<C, Rs>..., MarkerCheck<C, Optional, Os>..., MarkerCheck<C, InitAfter, As>... {};
 
 // Runs ComponentDiagnosis only on a well-formed list (naming it reads C's dependency
 // list), and only for a component whose own list is valid (else that is the one error).
@@ -510,36 +532,44 @@ struct ListDiagnosis<ListInfo<Cs...>, std::index_sequence<Is...>>
 // keel::Component
 
 /// Base class of every component. List the components it uses:
-///   class Exporter : public keel::Component<Aggregator, Logger, keel::Optional<Metrics>>
+///   class Exporter : public keel::Component<Aggregator, Logger, keel::Optional<Metrics>,
+///                                           keel::InitAfter<Migrations>>
 /// The listed types may be incomplete (forward-declared) in the header.
 template <class... Dependencies>
 class Component : public detail::ComponentBase {
 public:
     using RequiredDependencies = detail::Concat<typename detail::Split<Dependencies>::required...>;
     using OptionalDependencies = detail::Concat<typename detail::Split<Dependencies>::optional...>;
-    using DeclaredDependencies = detail::Concat<RequiredDependencies, OptionalDependencies>;
+    using InitAfterDependencies = detail::Concat<typename detail::Split<Dependencies>::initAfter...>;
+    using DeclaredDependencies = detail::Concat<RequiredDependencies, OptionalDependencies, InitAfterDependencies>;
 
-    // T and Optional<T> both name T, so listing both is a duplicate too.
+    // T, Optional<T> and InitAfter<T> all name T, so listing two of them is a duplicate.
     static constexpr bool uniqueDependencies = detail::UniqueList<DeclaredDependencies>::value;
 
     // Checked here rather than in the class body: a failed check there would make the
     // derived class invalid, and every later use of it would add an error.
     Component() noexcept {
         static_assert(uniqueDependencies,
-                      "keel: a dependency is listed twice in keel::Component<...> (T and keel::Optional<T> count as "
-                      "the same)");
+                      "keel: a dependency is listed twice in keel::Component<...> (T, keel::Optional<T> and "
+                      "keel::InitAfter<T> count as the same)");
     }
 
 protected:
     /// A required dependency. Compiles only if T is listed in keel::Component<...> as a
-    /// required dependency (not keel::Optional<T>). Usable from init() on; resolve it there
-    /// and keep the reference.
+    /// required dependency (not keel::Optional<T> or keel::InitAfter<T>). Usable from init()
+    /// on; resolve it there and keep the reference.
     template <class T>
     T& getComponent() const {
-        static_assert(!detail::contains<T, OptionalDependencies>,
-                      "keel: T is declared keel::Optional<T>; use findComponent<T>(), which may return nullptr");
-        static_assert(detail::contains<T, DeclaredDependencies>,
-                      "keel: getComponent<T>() requires T to be listed in this component's keel::Component<...>");
+        // At most one of these fails. With a duplicate in the list, none does: the duplicate
+        // is the one error (see the constructor).
+        if constexpr (uniqueDependencies) {
+            static_assert(!detail::contains<T, OptionalDependencies>,
+                          "keel: T is declared keel::Optional<T>; use findComponent<T>(), which may return nullptr");
+            static_assert(!detail::contains<T, InitAfterDependencies>,
+                          "keel: T is declared keel::InitAfter<T>, which is ordering only; replace it with T to use T");
+            static_assert(detail::contains<T, DeclaredDependencies>,
+                          "keel: getComponent<T>() requires T to be listed in this component's keel::Component<...>");
+        }
         return *static_cast<T*>(lookup(detail::typeId<T>(), detail::typeName<T>(), true));
     }
 
@@ -549,10 +579,16 @@ protected:
     /// keep the pointer.
     template <class T>
     T* findComponent() const {
-        static_assert(!detail::contains<T, RequiredDependencies>,
-                      "keel: T is a required dependency; use getComponent<T>(), which never returns nullptr");
-        static_assert(detail::contains<T, DeclaredDependencies>,
-                      "keel: findComponent<T>() requires keel::Optional<T> in this component's keel::Component<...>");
+        if constexpr (uniqueDependencies) {  // as in getComponent()
+            static_assert(!detail::contains<T, RequiredDependencies>,
+                          "keel: T is a required dependency; use getComponent<T>(), which never returns nullptr");
+            static_assert(!detail::contains<T, InitAfterDependencies>,
+                          "keel: T is declared keel::InitAfter<T>, which is ordering only; replace it with "
+                          "keel::Optional<T> to use T");
+            static_assert(detail::contains<T, DeclaredDependencies>,
+                          "keel: findComponent<T>() requires keel::Optional<T> in this component's "
+                          "keel::Component<...>");
+        }
         return static_cast<T*>(lookup(detail::typeId<T>(), detail::typeName<T>(), false));
     }
 };

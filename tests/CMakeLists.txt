@@ -4,6 +4,7 @@ add_executable(keel_tests
     compose_test.cpp
     lifecycle_test.cpp
     optional_test.cpp
+    init_after_test.cpp
 )
 target_link_libraries(keel_tests PRIVATE keel::keel)
 if(MSVC)
@@ -53,6 +54,11 @@ keel_compile_fail(get_component_on_optional "T is declared keel::Optional<T>; us
 keel_compile_fail(undeclared_optional "findComponent<T>\\(\\) requires keel::Optional<T>")
 keel_compile_fail(required_and_optional "a dependency is listed twice")
 keel_compile_fail(find_component_on_required "T is a required dependency; use getComponent<T>")
-keel_compile_fail(nested_optional "InvalidOptional<Server, ?keel::Optional<Metrics> ?>")
-keel_compile_fail(const_optional "InvalidOptional<Server, ?const Metrics>")
+keel_compile_fail(nested_optional "InvalidDependency<Server, ?keel::Optional<keel::Optional<Metrics> ?> ?>")
+keel_compile_fail(const_optional "InvalidDependency<Server, ?keel::Optional<const Metrics> ?>")
 keel_compile_fail(optional_cycle "DependencyCycle<keel::detail::TypeList<Store, ?Cache> ?>")
+keel_compile_fail(get_component_on_init_after "T is declared keel::InitAfter<T>, which is ordering only; replace it with T to use T")
+keel_compile_fail(find_component_on_init_after "T is declared keel::InitAfter<T>, which is ordering only; replace it with keel::Optional<T>")
+keel_compile_fail(required_and_init_after "a dependency is listed twice")
+keel_compile_fail(init_after_cycle "DependencyCycle<keel::detail::TypeList<Pool, ?Worker> ?>")
+keel_compile_fail(invalid_init_after "InvalidDependency<Server, ?keel::InitAfter<keel::Optional<Metrics> ?> ?>")
