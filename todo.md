@@ -160,8 +160,8 @@
 
 - **Large apps on MSVC may need `/constexpr:steps1000000`.** The order is computed at
   compile time; the 150-component test needs about 511k clang constexpr steps (nearly all in
-  `topologicalOrder`), above MSVC's default of about 100k. The tests set the flag; the
-  docs must mention it (milestone 12). Alternative: a cheaper sort.
+  `topologicalOrder`), above MSVC's default of about 100k. The tests set the flag; documented
+  in docs/composition.md and docs/reference.md. Alternative: a cheaper sort.
 
 - **`enabled()` may collide with a user's own member.** A component that already has a
   `bool enabled() const` (an accessor, say) now overrides the hook with it, silently; and a
@@ -295,12 +295,16 @@
   `init()` only (after, `keel::Error`). Not reachable through `keel::run<AppType>`. erocha
   may revisit the name (`setAsync`, `runAllOnCallingThread`, a compose-time option, ...).
 
-- **Async is a property of the whole app, not of one component** (to document in the README,
-  milestone 12, "Threads"): once any component is async, components with no dependency path
-  between them may run at the same time, sync ones included, so shared dependencies (a
-  Logger) must be thread-safe; init()/start() may run on worker threads while stop()/deinit()
-  run on the calling thread. Also in the README: linking. The CMake target links
+- **Async is a property of the whole app, not of one component**: once any component is
+  async, components with no dependency path between them may run at the same time, sync ones
+  included, so shared dependencies (a Logger) must be thread-safe; init()/start() may run on
+  worker threads while stop()/deinit() run on the calling thread. The CMake target links
   `Threads::Threads`; users who copy the header without CMake need `-pthread` on Linux.
+  Documented in the README ("Threads") and docs/async.md.
+
+- **Type names first in the compile errors (C++26).** When user-generated `static_assert`
+  messages are available, put the type names first in each message ("Migrations needs
+  Database, which isn't composed") instead of the template parameter names.
 
 - **Install/export (milestone 13):** `keelConfig.cmake` must call
   `find_dependency(Threads)`.
