@@ -18,7 +18,7 @@ public:
 
 private:
     void init() override { events.push_back("init Config"); }
-    void deinit() override { events.push_back("deinit Config"); }
+    void deinit() noexcept override { events.push_back("deinit Config"); }
     std::string name_ = "default";
 };
 
@@ -31,7 +31,7 @@ private:
         prefix_ = "[" + getComponent<Config>().name() + "]";
         events.push_back("init Logger");
     }
-    void deinit() override { events.push_back("deinit Logger"); }
+    void deinit() noexcept override { events.push_back("deinit Logger"); }
     std::string prefix_;
 };
 
@@ -44,7 +44,7 @@ private:
         logger_ = &getComponent<Logger>();
         events.push_back("init Server");
     }
-    void deinit() override { events.push_back("deinit Server"); }
+    void deinit() noexcept override { events.push_back("deinit Server"); }
     const Logger* logger_ = nullptr;
 };
 
@@ -52,7 +52,7 @@ struct BrokenDevice {};
 
 class Device : public keel::Component<Logger> {
     void init() override { throw BrokenDevice{}; }
-    void deinit() override { events.push_back("deinit Device"); }
+    void deinit() noexcept override { events.push_back("deinit Device"); }
 };
 
 }  // namespace
@@ -102,28 +102,51 @@ TEST(a_throwing_init_rolls_back_and_rethrows_unchanged) {
     CHECK((events == std::vector<std::string>{"init Config", "init Logger", "deinit Logger", "deinit Config"}));
 }
 
-TEST(list_order_is_trusted_and_a_wrong_order_fails_loudly) {
+TEST(the_order_comes_from_the_dependencies_not_the_list) {
     events.clear();
-    auto app = keel::compose<Config, Server, Logger>();  // Server before the Logger it uses
-    std::string message;
-    try {
-        app.init();
-    } catch (const keel::Error& e) {
-        message = e.what();
-    }
-    CHECK(message.find("before it was initialized") != std::string::npos);
-    CHECK((events == std::vector<std::string>{"init Config", "deinit Config"}));
+    auto app = keel::compose<Server, Logger, Config>();  // backwards
+    app.init();
+    app.deinit();
+    CHECK((events == std::vector<std::string>{"init Config", "init Logger", "init Server", "deinit Server",
+                                              "deinit Logger", "deinit Config"}));
 }
 
-TEST(a_dependency_that_is_not_composed_is_a_runtime_error) {
-    auto app = keel::compose<Logger>();  // no Config
-    std::string message;
-    try {
-        app.init();
-    } catch (const keel::Error& e) {
-        message = e.what();
-    }
-    CHECK(message.find("which is not part of the application") != std::string::npos);
+namespace {
+class Metrics : public keel::Component<> {
+    void init() override { events.push_back("init Metrics"); }
+};
+class Tracing : public keel::Component<> {
+    void init() override { events.push_back("init Tracing"); }
+};
+}  // namespace
+
+TEST(independent_components_keep_the_list_order) {
+    events.clear();
+    auto app = keel::compose<Tracing, Server, Metrics, Logger, Config>();
+    app.init();
+    CHECK((events == std::vector<std::string>{"init Tracing", "init Metrics", "init Config", "init Logger",
+                                              "init Server"}));
+}
+
+namespace {
+std::vector<std::string> constructed;
+struct Tracked {
+    explicit Tracked(const char* name) : name_(name) { constructed.push_back(std::string("+") + name_); }
+    ~Tracked() { constructed.push_back(std::string("-") + name_); }
+    const char* name_;
+};
+class First : public keel::Component<> {
+    Tracked tracked_{"First"};
+};
+class Second : public keel::Component<First> {
+    Tracked tracked_{"Second"};
+};
+}  // namespace
+
+TEST(construction_follows_the_dependencies_and_destruction_reverses_it) {
+    constructed.clear();
+    { auto app = keel::compose<Second, First>(); }
+    CHECK((constructed == std::vector<std::string>{"+First", "+Second", "-Second", "-First"}));
 }
 
 TEST(init_twice_is_an_error) {
