@@ -176,8 +176,9 @@ Rules:
 - **Dependencies are usable from `init()` on** (and from `enabled()`), not in the
   constructor. Every component is constructed first, then initialized in dependency
   order. `getComponent` from a constructor throws `keel::Error`.
-- **Fetch once, keep the pointer.** A lookup is a hash-map access plus lifecycle checks;
-  it isn't meant for a hot path. Resolve dependencies in `init()` and store them.
+- **Fetch once, keep the pointer.** A lookup is a hash-map access plus lifecycle checks
+  (it doesn't allocate), so it isn't meant for a hot path. Resolve dependencies in
+  `init()` and store them.
 - `getComponent` is `protected`. Code outside the component can't use it to reach into
   other components.
 

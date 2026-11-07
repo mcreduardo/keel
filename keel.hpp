@@ -620,8 +620,12 @@ private:
 
     // The dependency with this id, or nullptr if it isn't composed and not required.
     void* lookup(TypeId id, std::string_view dependency, bool required) const;
-    // Every component bound to this id other than this one, in init order.
-    std::vector<void*> lookupAll(TypeId id, std::string_view dependency) const;
+    // Every component bound to id, in init order, for getAll<I>(); throws unless this
+    // component may use its dependencies now. Pass each one to useIfEnabled().
+    const std::vector<Binding>& lookupAll(TypeId id, std::string_view dependency) const;
+    // The bound object of an entry of lookupAll(), or nullptr if it is this component or
+    // disabled; throws as use() does.
+    void* useIfEnabled(const Binding& binding, std::string_view dependency) const;
     // Throws unless this component may use its dependencies now (from init() on).
     void checkCanUse(std::string_view accessor, std::string_view dependency) const;
     // The bound object, if its owner is initialized; else throws.
@@ -730,6 +734,11 @@ private:
     enum class State { building, initialized, started, stopped, failed, deinitialized };
 
     class Schedule;
+
+    // Throws the error of a resolve() that found no usable binding.
+    [[noreturn]] void resolveFailed(const std::vector<Binding>& bindings, std::string_view dependency,
+                                    std::string_view user, bool alternatives, bool undecided,
+                                    std::size_t enabledCount) const;
 
     // Runs init() or start() on every component (Phase::init or Phase::start), each after
     // the ones it is ordered after; the async ones on their own threads (Schedule). Throws
@@ -1586,10 +1595,13 @@ protected:
                           "keel: getAll<I>() requires keel::All<I> or keel::Optional<keel::All<I>> in this "
                           "component's keel::Component<...>");
         }
-        const std::vector<void*> found = lookupAll(detail::typeId<I>(), detail::typeName<I>());
+        constexpr std::string_view name = detail::typeName<I>();
+        const std::vector<detail::Binding>& bindings = lookupAll(detail::typeId<I>(), name);
         std::vector<I*> out;
-        out.reserve(found.size());
-        for (void* p : found) out.push_back(static_cast<I*>(p));
+        out.reserve(bindings.size());  // the one allocation, if any provider exists
+        for (const detail::Binding& b : bindings) {
+            if (void* p = useIfEnabled(b, name)) out.push_back(static_cast<I*>(p));
+        }
         return out;
     }
 };
@@ -2149,13 +2161,14 @@ inline void* ComponentBase::lookup(TypeId id, std::string_view dependency, bool 
     return b == nullptr ? nullptr : use(*b, dependency);
 }
 
-inline std::vector<void*> ComponentBase::lookupAll(TypeId id, std::string_view dependency) const {
+inline const std::vector<Binding>& ComponentBase::lookupAll(TypeId id, std::string_view dependency) const {
     checkCanUse("getAll", dependency);
-    std::vector<void*> out;
-    for (const Binding& b : registry_->findAll(id)) {
-        if (b.owner != this && b.owner->state_ != State::disabled) out.push_back(use(b, dependency));
-    }
-    return out;
+    return registry_->findAll(id);
+}
+
+inline void* ComponentBase::useIfEnabled(const Binding& b, std::string_view dependency) const {
+    if (b.owner == this || b.owner->state_ == State::disabled) return nullptr;
+    return use(b, dependency);
 }
 
 // Runs before init(): the dependencies come earlier in the init order, so each is
@@ -2164,7 +2177,11 @@ inline void ComponentBase::checkDependencies() const {
     for (std::size_t i = 0; i < needCount_; ++i) {
         const Need& need = needs_[i];
         if (need.use == Use::all) {
-            if (lookupAll(need.id, need.name()).empty()) {
+            bool any = false;  // every enabled provider is still checked (use() throws if not initialized)
+            for (const Binding& b : lookupAll(need.id, need.name())) {
+                if (useIfEnabled(b, need.name()) != nullptr) any = true;
+            }
+            if (!any) {
                 throw Error(concat({"keel: ", name_, " uses keel::All<", need.name(), ">, and every provider of ",
                                     need.name(), " is disabled (use keel::Optional<keel::All<", need.name(),
                                     ">> if none is fine)"}));
@@ -2190,33 +2207,47 @@ inline const Binding* Registry::resolve(TypeId id, std::string_view dependency, 
     const std::vector<Binding>& bindings = findAll(id);
     bool alternatives = !bindings.empty();  // every binding is an alternative
     bool undecided = false;                 // a binding whose enabled() wasn't asked yet
-    const Binding* enabled = nullptr;  // the last one
+    const Binding* enabled = nullptr;       // the last one
     std::size_t enabledCount = 0;
-    std::string enabledNames;
-    std::string allNames;
     for (const Binding& b : bindings) {
+        const ComponentBase::State state = b.owner->state_;
         alternatives = alternatives && b.alternative;
-        undecided = undecided || b.owner->state_ == ComponentBase::State::created;
-        allNames += concat({allNames.empty() ? "" : ", ", b.owner->name_});
-        if (b.owner->state_ == ComponentBase::State::disabled) continue;
-        enabledNames += concat({enabledNames.empty() ? "" : ", ", b.owner->name_});
+        undecided = undecided || state == ComponentBase::State::created;
+        if (state == ComponentBase::State::disabled) continue;
         enabled = &b;
         ++enabledCount;
     }
+    const bool chosen = !(alternatives && (state_ == State::building || undecided));
+    if (chosen && enabledCount <= 1 && (enabled != nullptr || !required)) return enabled;
+    resolveFailed(bindings, dependency, user, alternatives, undecided, enabledCount);
+}
+
+// The error of a failed resolve(), in the order resolve() checks. Builds the names only
+// here, so that a lookup that succeeds doesn't allocate.
+inline void Registry::resolveFailed(const std::vector<Binding>& bindings, std::string_view dependency,
+                                    std::string_view user, bool alternatives, bool undecided,
+                                    std::size_t enabledCount) const {
+    const auto names = [&](bool enabledOnly) {
+        std::string out;
+        for (const Binding& b : bindings) {
+            if (enabledOnly && b.owner->state_ == ComponentBase::State::disabled) continue;
+            out += concat({out.empty() ? "" : ", ", b.owner->name_});
+        }
+        return out;
+    };
     const std::string who = user.empty() ? concat({"keel: getComponent<", dependency, ">()"})
                                          : concat({"keel: ", user, " uses ", dependency});
     if (alternatives && state_ == State::building) {
-        throw Error(concat({who, ": init() chooses among its alternatives (", allNames, "); call it after init()"}));
+        throw Error(concat({who, ": init() chooses among its alternatives (", names(false), "); call it after init()"}));
     }
     if (alternatives && undecided) {
-        throw Error(concat({who, ": init() failed before choosing among its alternatives (", allNames, ")"}));
+        throw Error(concat({who, ": init() failed before choosing among its alternatives (", names(false), ")"}));
     }
     if (enabledCount > 1) {
-        throw Error(concat({who, ": several of its alternatives are enabled (only one may be): ", enabledNames}));
+        throw Error(concat({who, ": several of its alternatives are enabled (only one may be): ", names(true)}));
     }
-    if (enabled != nullptr || !required) return enabled;
     if (bindings.empty()) throw Error(concat({who, ", which is not part of the application"}));
-    if (alternatives) throw Error(concat({who, ": none of its alternatives (", allNames, ") is enabled"}));
+    if (alternatives) throw Error(concat({who, ": none of its alternatives (", names(false), ") is enabled"}));
     const std::string_view provider = bindings.front().owner->name_;
     throw Error(concat({who, ": ", provider == dependency ? "" : "its provider ", provider,
                         " is disabled (its enabled() returned false)"}));

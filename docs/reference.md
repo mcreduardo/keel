@@ -96,8 +96,9 @@ Details: [Lifecycle](lifecycle.md), [Inspecting and testing](inspection-and-test
   `AsyncStart`. Then components with no dependency path between them may run at the same
   time, and `stop()`/`deinit()` still run on the calling thread.
 - No RTTI. A type's identity is the address of a per-type variable; lookups go through a
-  hash map. Components resolve their dependencies in `init()`, so there is no lookup on the
-  hot path.
+  hash map. A lookup that succeeds doesn't allocate (`getAll<I>()` allocates only the vector
+  it returns); error messages are built only when it throws. Still, components resolve their
+  dependencies in `init()`, so there is no lookup on the hot path.
 
 ## Requirements and platform notes
 

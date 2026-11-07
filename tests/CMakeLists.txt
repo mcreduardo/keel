@@ -28,6 +28,16 @@ add_test(NAME keel_tests COMMAND keel_tests)
 # The async tests wait for each other with timeouts of 5 s; a hang must not stall ctest.
 set_tests_properties(keel_tests PROPERTIES TIMEOUT 120)
 
+# Its own executable: it replaces the global operator new to count allocations.
+add_executable(keel_alloc_tests main.cpp alloc_test.cpp)
+target_link_libraries(keel_alloc_tests PRIVATE keel::keel)
+if(MSVC)
+    target_compile_options(keel_alloc_tests PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(keel_alloc_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME keel_alloc_tests COMMAND keel_alloc_tests)
+
 # Compile-fail tests: compile_fail/<name>.cpp must not compile, the output must match
 # <pattern>, and (GCC/Clang) there must be exactly one error, or [errors] if given. The
 # targets are excluded from the normal build; each test builds its own. They share the
