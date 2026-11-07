@@ -1,0 +1,15 @@
+// Must not compile: keel::Optional<Storage> also needs at most one provider.
+#include <keel.hpp>
+
+struct Storage {
+    virtual ~Storage() = default;
+};
+
+class DiskStorage : public keel::Component<keel::Provides<Storage>>, public Storage {};
+class MemoryStorage : public keel::Component<keel::Provides<Storage>>, public Storage {};
+
+class Service : public keel::Component<keel::Optional<Storage>> {};
+
+int main() {
+    auto app = keel::compose<DiskStorage, Service, MemoryStorage>();
+}

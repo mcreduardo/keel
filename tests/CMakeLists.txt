@@ -6,6 +6,7 @@ add_executable(keel_tests
     optional_test.cpp
     init_after_test.cpp
     run_test.cpp
+    interfaces_test.cpp
 )
 target_link_libraries(keel_tests PRIVATE keel::keel)
 if(MSVC)
@@ -71,3 +72,20 @@ keel_compile_fail(run_rvalue_member "RunTargetNotCallable<int ?\\(.*Cli::\\*\\)\
 keel_compile_fail(run_not_callable "RunNotCallable<")
 keel_compile_fail(run_not_an_app "NotAnApp<Cli>")
 keel_compile_fail(run_generic_lambda_error "nope")
+keel_compile_fail(ambiguous_dependency "AmbiguousDependency<Service, ?Storage, ?keel::detail::TypeList<DiskStorage, ?MemoryStorage ?> ?>")
+keel_compile_fail(ambiguous_optional "AmbiguousDependency<Service, ?Storage, ?keel::detail::TypeList<DiskStorage, ?MemoryStorage ?> ?>")
+keel_compile_fail(provides_without_deriving "NotDerivedFromInterface<DiskStorage, ?Storage>")
+keel_compile_fail(provides_private_base "NotDerivedFromInterface<DiskStorage, ?Storage>")
+keel_compile_fail(provides_ambiguous_base "NotDerivedFromInterface<DiskStorage, ?Storage>")
+keel_compile_fail(duplicate_provides "keel::Provides<I> is listed twice")
+keel_compile_fail(invalid_provides "InvalidDependency<DiskStorage, ?keel::Provides<const Storage> ?>")
+keel_compile_fail(undeclared_provider "UndeclaredProvider<Server, ?Metrics, ?PrometheusMetrics>")
+keel_compile_fail(undeclared_optional_provider "UndeclaredProvider<Server, ?Metrics, ?PrometheusMetrics>")
+keel_compile_fail(undeclared_init_after_provider "UndeclaredProvider<Server, ?Metrics, ?PrometheusMetrics>")
+keel_compile_fail(root_get_ambiguous "AmbiguousInterface<Storage, ?keel::detail::TypeList<DiskStorage, ?MemoryStorage ?> ?>")
+keel_compile_fail(root_get_not_provided "NotInApp<Storage>")
+keel_compile_fail(run_ambiguous_interface "RunTargetAmbiguous<Shell, ?keel::detail::TypeList<Terminal, ?Console ?> ?>")
+keel_compile_fail(run_inherited_member "RunTargetNotComposed<Loop, ?int")
+keel_compile_fail(ambiguous_dependency_no_cycle "AmbiguousDependency<A, ?Storage, ?keel::detail::TypeList<B, ?C ?> ?>")
+keel_compile_fail(undeclared_subclass "UndeclaredSubclass<Service, ?Clock, ?FakeClock>")
+keel_compile_fail(root_get_inherited_ambiguous "AmbiguousInterface<Clock, ?keel::detail::TypeList<Clock, ?FakeClock ?> ?>")

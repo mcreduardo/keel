@@ -1,0 +1,16 @@
+// Must not compile: A needs one Storage, and B and C provide it. C depends on A, which would
+// also make a cycle through C if A were ordered after both; the ambiguity is the one error.
+#include <keel.hpp>
+
+struct Storage {
+    virtual ~Storage() = default;
+};
+
+class A;
+class B : public keel::Component<keel::Provides<Storage>>, public Storage {};
+class C : public keel::Component<A, keel::Provides<Storage>>, public Storage {};
+class A : public keel::Component<Storage> {};
+
+int main() {
+    auto app = keel::compose<A, B, C>();
+}
