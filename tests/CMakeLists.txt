@@ -11,6 +11,7 @@ add_executable(keel_tests
     runtime_decisions_test.cpp
     bundle_test.cpp
     is_valid_test.cpp
+    introspection_test.cpp
 )
 target_link_libraries(keel_tests PRIVATE keel::keel)
 if(MSVC)
@@ -41,6 +42,9 @@ function(keel_compile_fail name pattern)
     endif()
     add_library(${name} OBJECT EXCLUDE_FROM_ALL compile_fail/${name}.cpp)
     target_link_libraries(${name} PRIVATE keel::keel)
+    if(MSVC)
+        target_compile_options(${name} PRIVATE /constexpr:steps1000000)  # large_cycle
+    endif()
     add_test(NAME compile_fail.${name}
              COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${CMAKE_BINARY_DIR} -DTARGET=${name} -DCONFIG=$<CONFIG>
                      "-DPATTERN=${pattern}" -DCOUNT_ERRORS=${KEEL_COUNT_ERRORS} -DERRORS=${errors}
@@ -56,6 +60,9 @@ keel_compile_fail(missing_dependency "MissingDependency<Server, ?Logger>")
 keel_compile_fail(missing_dependencies "MissingDependency<Server, ?Logger>.*MissingDependency<Exporter, ?Config>" 2)
 keel_compile_fail(dependency_cycle "DependencyCycle<keel::detail::TypeList<P, ?Q, ?R> ?>")
 keel_compile_fail(two_cycles "DependencyCycle<keel::detail::TypeList<A, ?B, ?C, ?D> ?>")
+keel_compile_fail(large_cycle "DependencyCycle<keel::detail::TypeList<Link<1>, ?Link<0> ?> ?>")
+keel_compile_fail(self_cycle "DependencyCycle<keel::detail::TypeList<C> ?>")
+keel_compile_fail(introspection_on_cycle "DependencyCycle<keel::detail::TypeList<P, ?Q> ?>")
 keel_compile_fail(duplicate_component "DuplicateComponent<Logger>")
 keel_compile_fail(not_a_component "NotAComponent<Settings>")
 keel_compile_fail(private_component "NotAComponent<Hidden>")

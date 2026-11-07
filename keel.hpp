@@ -7,8 +7,11 @@
 #pragma once
 
 #include <array>
+#include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <initializer_list>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -25,6 +28,32 @@ namespace keel {
 class Error : public std::logic_error {
 public:
     using std::logic_error::logic_error;
+};
+
+/// A lifecycle hook of a component, as recorded in keel::Timing.
+enum class Phase { init, start, stop, deinit };
+
+/// "init", "start", "stop" or "deinit".
+constexpr std::string_view toString(Phase phase) noexcept {
+    switch (phase) {
+        case Phase::init:
+            return "init";
+        case Phase::start:
+            return "start";
+        case Phase::stop:
+            return "stop";
+        case Phase::deinit:
+            return "deinit";
+    }
+    return "?";
+}
+
+/// How long one lifecycle call of one component took (App::timings()).
+struct Timing {
+    std::string_view component;            // the component's name, as in App::initOrder()
+    Phase phase = Phase::init;
+    std::chrono::nanoseconds duration{};   // measured with std::chrono::steady_clock
+    bool failed = false;                   // the call threw (init() or start()); the rollback follows
 };
 
 /// Marks a dependency in keel::Component<...> as optional: the component works without
@@ -340,12 +369,21 @@ constexpr bool implements() {
 /// Human-readable type name at compile time, without RTTI.
 template <class T>
 constexpr std::string_view typeName() {
-#if defined(__clang__) || defined(__GNUC__)
-    // clang: "std::string_view keel::detail::typeName() [T = Logger]"
-    // gcc:   "constexpr std::string_view keel::detail::typeName() [with T = Logger; ...]"
+#if defined(__clang__)
+    // "std::string_view keel::detail::typeName() [T = Logger]". The name itself may contain
+    // ']' and ';' (Arr<int[3]>, a string template argument), so it ends at the last ']'.
     constexpr std::string_view f = __PRETTY_FUNCTION__;
     constexpr auto begin = f.find("T = ") + 4;
-    constexpr auto end = f.find_first_of(";]", begin);
+    return f.substr(begin, f.rfind(']') - begin);
+#elif defined(__GNUC__)
+    // "constexpr std::string_view keel::detail::typeName() [with T = Logger;
+    // std::string_view = std::basic_string_view<char>]": the name ends where the
+    // std::string_view typedef is listed after it (searched from the end, since the name
+    // may contain ';' and ']'), or at the last ']' if it isn't listed.
+    constexpr std::string_view f = __PRETTY_FUNCTION__;
+    constexpr auto begin = f.find("T = ") + 4;
+    constexpr auto typedefs = f.rfind("; std::string_view = ");
+    constexpr auto end = typedefs != std::string_view::npos && typedefs > begin ? typedefs : f.rfind(']');
     return f.substr(begin, end - begin);
 #elif defined(_MSC_VER)
     // "... __cdecl keel::detail::typeName<class Logger>(void)"
@@ -569,6 +607,13 @@ public:
         return it == bindings_.end() ? none : it->second;
     }
 
+    std::span<const Timing> timings() const noexcept { return timings_; }
+
+    // The component at this position of the init order returned false from enabled().
+    bool disabled(std::size_t position) const noexcept {
+        return components_[position]->state_ == ComponentBase::State::disabled;
+    }
+
 private:
     // stopped vs initialized: the components are in the same state, but a stopped app
     // can't be started again.
@@ -576,6 +621,36 @@ private:
 
     void stopAll() noexcept;
     void deinitAll() noexcept;
+
+    // Calls hook on c and records how long it took, also if it throws. init() reserves
+    // room for every call an App can make (at most one per component and phase), so
+    // recording never allocates, also in stop() and deinit(), which must not throw.
+    template <class Hook>
+    void timed(Phase phase, ComponentBase& c, Hook hook) {
+        struct Recorder {  // records when the call returns or throws
+            Recorder(Registry& r, Phase p, const ComponentBase& c) : registry(r), phase(p), component(c) {}
+            Recorder(const Recorder&) = delete;
+            Recorder& operator=(const Recorder&) = delete;
+            ~Recorder() { registry.record(phase, component, begin, failed); }
+            Registry& registry;
+            Phase phase;
+            const ComponentBase& component;
+            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+            bool failed = true;  // until the call returns
+        } recorder(*this, phase, c);
+        (c.*hook)();
+        recorder.failed = false;
+    }
+    void record(Phase phase, const ComponentBase& c, std::chrono::steady_clock::time_point begin,
+                bool failed) noexcept {
+        const auto duration = std::chrono::steady_clock::now() - begin;
+        // Can't be full (see timed()); checked anyway, since a push_back that allocated
+        // could throw here, in a noexcept function.
+        assert(timings_.size() < timings_.capacity());
+        if (timings_.size() == timings_.capacity()) return;
+        timings_.push_back(
+            Timing{c.name_, phase, std::chrono::duration_cast<std::chrono::nanoseconds>(duration), failed});
+    }
 
     // Binds each interface C provides to C's subobject of that type, after the providers
     // added before it. (A Provides<I> that C can't be used as is reported at compile time
@@ -594,6 +669,7 @@ private:
 
     std::vector<ComponentBase*> components_;  // in init order
     std::unordered_map<TypeId, std::vector<Binding>> bindings_;  // each in init order
+    std::vector<Timing> timings_;  // in call order
     State state_ = State::building;
 };
 
@@ -854,23 +930,67 @@ constexpr TopologicalOrder<N> topologicalOrder(const Graph<N>& graph) {
     return o;
 }
 
-// The components that are on a cycle: those that reach themselves through unplaced
-// components. Components that only depend on a cycle are left out. Only evaluated when
-// there is a cycle. O(N³), on the error path only.
+// Depth-first searches over the unplaced components, following the edges forward (i
+// depends on j) or backward. Each search marks the components it reaches that no earlier
+// search reached, and appends each to `finished` once every component it leads to is
+// done. Iterative, and each row is scanned once over all searches: O(N²).
 template <std::size_t N>
-constexpr std::array<bool, N> componentsOnCycles(const Graph<N>& graph, const std::array<bool, N>& placed) {
-    Graph<N> reach{};
-    for (std::size_t i = 0; i < N; ++i) {
-        for (std::size_t j = 0; j < N; ++j) reach[i][j] = graph[i][j] && !placed[i] && !placed[j];
+struct CycleSearch {
+    constexpr CycleSearch(const Graph<N>& g, const std::array<bool, N>& p, bool f) : graph(g), placed(p), forward(f) {}
+
+    const Graph<N>& graph;
+    const std::array<bool, N>& placed;
+    bool forward;
+    std::array<std::size_t, N> mark{};  // the search that reached it, from 1; 0: none yet
+    std::array<std::size_t, N> finished{};
+    std::size_t finishedCount = 0;
+    std::size_t searches = 0;
+
+    constexpr bool edge(std::size_t from, std::size_t to) const {
+        return forward ? graph[from][to] : graph[to][from];
     }
-    for (std::size_t k = 0; k < N; ++k) {
-        for (std::size_t i = 0; i < N; ++i) {
-            if (!reach[i][k]) continue;
-            for (std::size_t j = 0; j < N; ++j) reach[i][j] = reach[i][j] || reach[k][j];
+    constexpr void search(std::size_t root) {
+        std::array<std::size_t, N> next{};  // the next column to scan in each row
+        std::array<std::size_t, N> stack{};
+        std::size_t depth = 0;
+        stack[depth++] = root;
+        mark[root] = ++searches;
+        while (depth > 0) {
+            const std::size_t v = stack[depth - 1];
+            std::size_t& j = next[v];
+            while (j < N && (placed[j] || mark[j] != 0 || !edge(v, j))) ++j;
+            if (j < N) {
+                mark[j] = searches;
+                stack[depth++] = j;
+            } else {
+                finished[finishedCount++] = v;
+                --depth;
+            }
         }
     }
+};
+
+// The components that are on a cycle: the unplaced ones in a strongly connected component
+// of two or more, or that depend on themselves. Components that only depend on a cycle,
+// or sit between two cycles, are left out. Only evaluated when there is a cycle.
+// Kosaraju's algorithm, O(N²).
+template <std::size_t N>
+constexpr std::array<bool, N> componentsOnCycles(const Graph<N>& graph, const std::array<bool, N>& placed) {
+    // Pass 1: the order in which forward searches finish the components.
+    CycleSearch<N> first(graph, placed, true);
+    for (std::size_t i = 0; i < N; ++i) {
+        if (!placed[i] && first.mark[i] == 0) first.search(i);
+    }
+    // Pass 2: backward searches, latest finished first; each reaches exactly one strongly
+    // connected component.
+    CycleSearch<N> second(graph, placed, false);
+    for (std::size_t k = first.finishedCount; k-- > 0;) {
+        if (second.mark[first.finished[k]] == 0) second.search(first.finished[k]);
+    }
+    std::array<std::size_t, N + 1> size{};
+    for (std::size_t i = 0; i < N; ++i) ++size[second.mark[i]];  // mark 0: placed
     std::array<bool, N> out{};
-    for (std::size_t i = 0; i < N; ++i) out[i] = reach[i][i];
+    for (std::size_t i = 0; i < N; ++i) out[i] = !placed[i] && (size[second.mark[i]] > 1 || graph[i][i]);
     return out;
 }
 
@@ -1178,6 +1298,14 @@ struct Analysis<Expanded<TypeList<Cs...>, Repeated>> {
 
 }  // namespace detail
 
+/// The name keel uses for the type T: in App::initOrder(), keel::Timing, App::toDot(),
+/// componentName() and error messages. The type as the compiler spells it
+/// (`Logger`, `edge::Imu<edge::Front>`), which may differ between compilers.
+template <class T>
+constexpr std::string_view typeName() noexcept {
+    return detail::typeName<T>();
+}
+
 // ===========================================================================
 // keel::Component
 
@@ -1304,6 +1432,35 @@ namespace detail {
 
 template <class Expansion>
 class AppImpl;
+
+// Appends s for a quoted DOT string: a backslash or a double quote gets a backslash (in a
+// label, DOT would read \n, \l, ... as escapes, and \" as a quote).
+inline void appendDotEscaped(std::string& out, std::string_view s) {
+    for (char c : s) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+}
+
+// The arrows of one entry of a component's list, from node n<from> to each n<j> with
+// targets[j]; labelled with the target type when it isn't the component's own type
+// (ids[j]), i.e. it resolves through an interface. Not a template, so that toDot() on a
+// large app compiles one loop, not one per entry.
+inline void appendDotEdges(std::string& out, std::size_t from, std::span<const bool> targets,
+                           std::span<const TypeId> ids, TypeId target, std::string_view style,
+                           std::string_view targetName) {
+    for (std::size_t j = 0; j < targets.size(); ++j) {
+        if (!targets[j]) continue;
+        out += concat({"  n", std::to_string(from), " -> n", std::to_string(j)});
+        std::string attributes(style);
+        if (ids[j] != target) {
+            attributes += attributes.empty() ? "label=\"" : ", label=\"";
+            appendDotEscaped(attributes, targetName);
+            attributes += '"';
+        }
+        out += attributes.empty() ? ";\n" : concat({" [", attributes, "];\n"});
+    }
+}
 
 // What run(fn) returns after a mistake in fn: it converts to anything and supports the
 // usual operators, so that in conversion contexts such as `return app.run(...);` the
@@ -1462,6 +1619,50 @@ public:
         }
     }
 
+    /// The names of the components in init order (construction order too; stop(),
+    /// deinit() and destruction run in reverse). Known at compile time, so it can be
+    /// checked in a test without running anything:
+    ///   static_assert(ServerApp::initOrder()[0] == "Config");
+    /// Disabled components are included (enabled() is asked at runtime); timings() shows
+    /// the calls that ran. Names are keel::typeName<T>(): the type names as the compiler
+    /// spells them (`Logger`, `edge::Imu<edge::Front>`), which may differ between compilers.
+    static constexpr std::array<std::string_view, Info::size> initOrder() noexcept {
+        return namesOf(typename Info::Sorted{});
+    }
+
+    /// How long each lifecycle call took, in call order: one entry per init(), start(),
+    /// stop() and deinit() that ran on a component. A disabled component has none (its
+    /// enabled() isn't timed), nor does one whose init() never ran because a dependency
+    /// was disabled. A call that threw is recorded with `failed`, followed by the
+    /// rollback's stop() and deinit() calls. The view stays valid as long as the App, but
+    /// holds the entries recorded when timings() was called; call it again later for more.
+    /// The destructor's stop() and deinit() can't be seen: call deinit() first, then read
+    /// the timings (with keel::run, read them inside fn, which runs before the shutdown).
+    ///   app.init();
+    ///   for (const keel::Timing& t : app.timings())
+    ///       std::cout << keel::toString(t.phase) << ' ' << t.component << ' '
+    ///                 << std::chrono::duration<double, std::milli>(t.duration).count() << " ms\n";
+    std::span<const Timing> timings() const noexcept { return registry_.timings(); }
+
+    /// The dependency graph in Graphviz DOT format, to render with Graphviz:
+    ///   std::ofstream("graph.dot") << app.toDot();   // then: dot -Tsvg graph.dot -o graph.svg
+    /// One box per component, in init order, with the interfaces it provides
+    /// ("provides I", "alternative I"). An arrow goes from a component to each component
+    /// it is ordered after because of one entry of its list: plain for a required
+    /// dependency, dashed for keel::Optional, dotted with an open head for keel::InitAfter,
+    /// bold for keel::All, bold and dashed for keel::Optional<keel::All>; labelled with the
+    /// interface when it resolves through one. Two entries that resolve to the same
+    /// component (T, and an interface T provides) give two arrows. Arrows point to the
+    /// dependencies, which are drawn to the right: init order reads right to left. After
+    /// init(), disabled components are gray and marked "(disabled)"; their arrows are still
+    /// drawn.
+    std::string toDot() const {
+        std::string out = "digraph keel {\n  rankdir=LR;\n  node [shape=box];\n";
+        dotNodes(out, std::make_index_sequence<Info::size>{});
+        dotEdges(out, std::make_index_sequence<Info::size>{});
+        return out + "}\n";
+    }
+
 protected:
     // init, start, fn, then stop and deinit, also if fn throws. Self is the App, which
     // run(fn) passes to fn.
@@ -1525,6 +1726,74 @@ private:
     template <class... Sorted>
     void addAll(TypeList<Sorted...>) {
         (registry_.add(storage_.template get<Sorted>()), ...);
+    }
+
+    template <class... Sorted>
+    static constexpr std::array<std::string_view, sizeof...(Sorted)> namesOf(TypeList<Sorted...>) noexcept {
+        return {typeName<Sorted>()...};
+    }
+
+    // toDot(): node n<i> is the i-th component of the compose<...> list (bundles expanded).
+    // Nodes, then edges, are written in init order: Ks are init positions.
+    template <std::size_t... Ks>
+    void dotNodes(std::string& out, std::index_sequence<Ks...>) const {
+        (dotNode<typename Info::template At<Info::order.index[Ks]>>(out, Info::order.index[Ks], registry_.disabled(Ks)),
+         ...);
+    }
+    template <class C>
+    static void dotNode(std::string& out, std::size_t i, bool disabled) {
+        out += concat({"  n", std::to_string(i), " [label=\""});
+        appendDotEscaped(out, typeName<C>());
+        dotInterfaces<C>(out, ProvidedOf<C>{});
+        out += disabled ? "\\n(disabled)\", color=gray, fontcolor=gray];\n" : "\"];\n";
+    }
+    template <class C, class... Is>
+    static void dotInterfaces([[maybe_unused]] std::string& out, TypeList<Is...>) {
+        (dotInterface<C, Is>(out), ...);
+    }
+    template <class C, class I>
+    static void dotInterface([[maybe_unused]] std::string& out) {
+        if constexpr (!std::is_same_v<C, I>) {  // a component that provides itself shows nothing
+            out += contains<I, AlternativesOf<C>> ? "\\nalternative " : "\\nprovides ";
+            appendDotEscaped(out, typeName<I>());
+        }
+    }
+
+    template <std::size_t... Ks>
+    static void dotEdges(std::string& out, std::index_sequence<Ks...>) {
+        (dotEdgesOf<typename Info::template At<Info::order.index[Ks]>>(
+             out, Info::order.index[Ks], EntriesOf<typename Info::template At<Info::order.index[Ks]>>{}),
+         ...);
+    }
+    template <class C, class... Entries>
+    static void dotEdgesOf([[maybe_unused]] std::string& out, [[maybe_unused]] std::size_t from,
+                           TypeList<Entries...>) {
+        (dotEdgesOfEntry<C, Entries>(out, from), ...);
+    }
+    // The edges of one entry: the components edgesOf() orders C after for it.
+    template <class C, class Entry>
+    static void dotEdgesOfEntry(std::string& out, std::size_t from) {
+        using T = typename Split<Entry>::target;
+        static constexpr typename Info::Row targets = Info::template edgesOf<C, Entry>();
+        appendDotEdges(out, from, targets, Checks::List::ids, typeId<T>(), dotStyle(Split<Entry>::use), typeName<T>());
+    }
+    static constexpr std::string_view dotStyle(Use use) noexcept {
+        switch (use) {
+            case Use::optional:
+                return "style=dashed";
+            case Use::ordering:
+                return "style=dotted, arrowhead=empty";
+            case Use::all:
+                return "style=bold";
+            case Use::optionalAll:
+                return "style=\"bold,dashed\"";
+            case Use::required:
+            case Use::provided:  // no edges
+            case Use::alternative:
+            case Use::misnested:
+                return "";
+        }
+        return "";
     }
 
     Registry registry_;  // declared first: outlives the components
@@ -1756,7 +2025,7 @@ inline void Registry::stopAll() noexcept {
     for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
         ComponentBase& c = **it;
         if (c.state_ != ComponentBase::State::started) continue;
-        c.stop();
+        timed(Phase::stop, c, &ComponentBase::stop);
         c.state_ = ComponentBase::State::initialized;
     }
 }
@@ -1766,13 +2035,14 @@ inline void Registry::deinitAll() noexcept {
     for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
         ComponentBase& c = **it;
         if (c.state_ != ComponentBase::State::initialized) continue;
-        c.deinit();
+        timed(Phase::deinit, c, &ComponentBase::deinit);
         c.state_ = ComponentBase::State::deinitialized;
     }
 }
 
 inline void Registry::init() {
     if (state_ != State::building) throw Error("keel: init() can be called only once per App");
+    timings_.reserve(4 * components_.size());  // see timed()
     state_ = State::failed;  // until proven otherwise
     try {
         for (ComponentBase* c : components_) {
@@ -1783,7 +2053,7 @@ inline void Registry::init() {
                 continue;
             }
             c->checkDependencies();
-            c->init();
+            timed(Phase::init, *c, &ComponentBase::init);
             c->state_ = ComponentBase::State::initialized;
         }
     } catch (...) {
@@ -1811,7 +2081,7 @@ inline void Registry::start() {
     try {
         for (ComponentBase* c : components_) {
             if (c->state_ == ComponentBase::State::disabled) continue;
-            c->start();
+            timed(Phase::start, *c, &ComponentBase::start);
             c->state_ = ComponentBase::State::started;
         }
     } catch (...) {

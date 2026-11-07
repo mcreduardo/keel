@@ -158,12 +158,6 @@
   all (`[](auto x, auto y) {}`) gets the compiler's "no matching function" rather than
   keel's `RunNotCallable`. Non-generic callables are still checked by keel.
 
-- **The cycle error is slow for large apps.** Naming the components on a cycle uses an O(N³)
-  reachability pass, which exceeds clang's constexpr step limit at about 150 components
-  (MSVC's limit is lower), so a large app with a cycle gets a step-limit error instead of
-  `DependencyCycle<...>`. The normal path is O(N²). A strongly-connected-components pass
-  (Tarjan, O(N²) on the matrix) would fix it.
-
 - **Large apps on MSVC may need `/constexpr:steps1000000`.** The order is computed at
   compile time; the 150-component test needs about 511k clang constexpr steps (nearly all in
   `topologicalOrder`), above MSVC's default of about 100k. The tests set the flag; the
@@ -217,3 +211,35 @@
   whose message says "or isn't defined at this point"). Documented on `isValid`. A dedicated
   "incomplete" error would need a completeness check that is itself fixed at first use, so
   it can't do better.
+
+- **`App::initOrder()` is a compile-time constant.** A `static constexpr` function returning
+  `std::array<std::string_view, N>`: the type names in init order, usable in a
+  `static_assert` and without constructing the App. It includes disabled components
+  (`enabled()` is asked at runtime); `timings()` shows what ran. Alternative (as in
+  `framework/`): a runtime `std::vector` of what was actually initialized. With async init
+  (milestone 11) it stays the dependency order; the order calls finish in is in `timings()`.
+
+- **Timings are always recorded.** Two `steady_clock::now()` per hook call, and one vector
+  reserved by `init()` for every call an App can make (four per component), so recording
+  never allocates later, also in `stop()`/`deinit()`, which are `noexcept`. No opt-out, no
+  injectable clock. `enabled()` and keel's own dependency checks aren't timed; a disabled
+  component has no entries. A call that throws is recorded with `failed = true`, followed
+  by the rollback's calls. Alternatives: opt-in (a flag or a template parameter); time
+  `enabled()` too; a user-supplied clock. Async init (milestone 11) will need a lock or
+  per-thread buffers.
+
+- **`App::toDot()` draws the ordering edges.** One arrow per edge the init order is derived
+  from, from the dependent to the dependency, styled by entry kind (required plain,
+  `Optional` dashed, `InitAfter` dotted with an open head, `All` bold, `Optional<All>` bold
+  and dashed),
+  labelled with the interface when it resolves through one. A dependency on an interface
+  with alternatives draws one arrow per alternative; an absent `Optional<T>`/`InitAfter<T>`
+  draws nothing. Nodes list the provided interfaces ("provides I", "alternative I"); after
+  `init()`, disabled ones are gray and marked "(disabled)", with their arrows. Node ids are
+  list positions (`n3`), labels are escaped (`"` and `\`). Built at runtime from
+  compile-time tables, only when called: about +0.9 s of compile time at -O2 for the
+  150-component test (one non-template loop writes the arrows), nothing when unused. Two
+  entries that resolve to the same component (T, and an interface T provides) give two
+  arrows; not merged, since each shows one entry. Alternatives: a constexpr string; arrows from
+  dependency to dependent (the init direction); leave disabled components out; show the
+  missing `Optional` targets as dashed placeholders.

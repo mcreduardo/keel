@@ -350,4 +350,16 @@ TEST(a_large_app_composes) {
     for (int n = 0; n < appSize; ++n) expected.push_back(n);
     CHECK(app.getComponent<Census>().numbers() == expected);
     app.deinit();
+    CHECK(app.timings().size() == 2 * (appSize + 1));  // init and deinit of each component
+}
+
+TEST(a_large_app_draws_its_graph) {
+    LargeApp app;
+    const std::string dot = app.toDot();
+    std::size_t edges = 0;
+    for (std::size_t at = dot.find(" -> "); at != std::string::npos; at = dot.find(" -> ", at + 1)) ++edges;
+    // Part<N> for N >= 4: three required, one optional, InitAfter<Node>; Part<1..3>: 2, 3
+    // and 4; Census: one per part.
+    CHECK(edges == (appSize - 4) * 5 + 2 + 3 + 4 + appSize);
+    CHECK(LargeApp::initOrder().size() == appSize + 1);
 }
