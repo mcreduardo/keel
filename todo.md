@@ -58,13 +58,53 @@
   its own message. Alternative: a dedicated check ("C provides I and depends on I"). Not done:
   the existing errors name the type, and the case looks rare. `Component<Provides<I>,
   InitAfter<I>>` is fine: it orders after the other providers of I (a decorator or chain).
+  The same holds for `Alternative<I>`: an alternative that depends on I is ordered after
+  every alternative, itself included, so it is `DependencyCycle<TypeList<C>>`. And an
+  alternative that needs a dependent of I is on a cycle with it (compile-fail test
+  `alternative_cycle`), even though only one alternative will be enabled.
 
-- **`App::getComponent<I>()` is resolved at compile time**, so it works before `init()`.
-  This will conflict with `Alternative<I>` (milestone 8), where the provider is chosen at
-  runtime. Revisit then.
+- **`App::getComponent<T>()`: compile time for one provider, runtime for alternatives.** A
+  component, or an interface with one `Provides<>` provider, is resolved at compile time and
+  usable before `init()` (to configure it); after `init()`, a disabled one throws
+  `keel::Error`. An interface whose providers are `Alternative<I>` (one or several) is
+  resolved at runtime: before `init()` it throws (the choice isn't made yet), after it the
+  enabled one, and it throws if none or several are enabled, or if a failed `init()` never
+  chose. `run(&C::f)` resolves its target after `init()` and before `start()`, so a disabled
+  or unchosen target throws before anything starts. Alternatives: return a disabled component anyway (as `framework/` does;
+  using it would touch an uninitialized component); or make every root lookup valid only
+  after `init()` (one rule, but configuring a component before `init()` would no longer be
+  possible).
 
-- **The ambiguity message doesn't mention `Alternative<I>` yet.** It suggests `All<I>`;
-  add the `Alternative<I>` hint in milestone 8.
+- **`enabled()` is asked in init order, in place of `init()`.** So it can use its
+  dependencies (typically `Config`), and a disabled component's own dependencies are never
+  checked (a disabled feature may need a disabled one). Alternative: ask every component
+  before any `init()`; then `enabled()` couldn't use dependencies, which is the main use.
+
+- **Alternatives are checked where they are needed.** When a component that requires I
+  initializes, exactly one alternative of I must be enabled; for `Optional<I>`, at most one
+  (none gives nullptr); `All<I>` takes the enabled ones (at least one for `All<I>`). Two
+  enabled alternatives of an I that nothing depends on as one I are not an error.
+  Alternative: check every group of alternatives in `init()`, used or not. Not done: the
+  dependents are what need one, and `framework/` behaves the same.
+
+- **A single `Alternative<I>` is allowed.** It is a provider that configuration may turn
+  off; a required dependent then fails `init()` ("none of its alternatives (...) is
+  enabled").
+  Alternative: require two or more alternatives at compile time. Not done: a stub can be
+  added later without touching the first one.
+
+- **Mixing `Provides<I>` and `Alternative<I>` providers is an error** when anything needs
+  one I: `MixedProviders<I, TypeList<Provides...>, TypeList<Alternatives...>>`, reported
+  once per I however many components, root calls and `run(&I::f)` need it (the per-site
+  ambiguity errors are skipped for a mixed I). `AmbiguousDependency` now suggests
+  `Alternative<I>`. Alternative:
+  the `Provides<I>` provider as the default when no alternative is enabled. Not done: one
+  rule ("all providers are alternatives"), and the default can be an alternative too.
+  `Provides<I>` and `Alternative<I>` in the same component count as a duplicate.
+
+- **A disabled component that looks up a dependency gets `keel::Error`** ("X used Y, but X
+  is disabled"), e.g. from a method the root calls on a reference it got before `init()`.
+  A disabled component is still constructed and destroyed (keep constructors cheap).
 
 - **`All<I>` leaves out the component itself.** A component that provides I and lists
   `All<I>` (a composite: a HealthCheck that checks all the others) gets every other
@@ -128,3 +168,10 @@
   compile time; the 150-component test needs about 511k clang constexpr steps (nearly all in
   `topologicalOrder`), above MSVC's default of about 100k. The tests set the flag; the
   docs must mention it (milestone 12). Alternative: a cheaper sort.
+
+- **`enabled()` may collide with a user's own member.** A component that already has a
+  `bool enabled() const` (an accessor, say) now overrides the hook with it, silently; and a
+  wrong signature (`bool enabled()` without const) silently hides the hook instead. The doc
+  recommends `override`. Options: rename the hook to something unlikely to collide
+  (`keelEnabled()`, `isEnabledAtRuntime()`); or detect a non-overriding `enabled` at compile
+  time. The name is kept for now because `framework/` and the posts use it. erocha decides.

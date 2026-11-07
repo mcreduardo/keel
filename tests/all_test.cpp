@@ -174,7 +174,7 @@ public:
 
 TEST(get_all_from_a_constructor_throws) {
     auto app = keel::compose<EagerEndpoint, Queue>();
-    CHECK(app.getComponent<EagerEndpoint>().error.find("getAll<") == 0);
+    CHECK(app.getComponent<EagerEndpoint>().error.find("keel: getAll<") == 0);
     CHECK(app.getComponent<EagerEndpoint>().error.find("from init() on") != std::string::npos);
 }
 

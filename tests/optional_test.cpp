@@ -113,7 +113,7 @@ std::string constructionError() {
 }  // namespace
 
 TEST(find_component_from_a_constructor_is_an_error) {
-    CHECK(std::string_view(constructionError()).starts_with("findComponent<"));
+    CHECK(std::string_view(constructionError()).starts_with("keel: findComponent<"));
 }
 
 namespace {

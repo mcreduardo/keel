@@ -8,6 +8,7 @@ add_executable(keel_tests
     run_test.cpp
     interfaces_test.cpp
     all_test.cpp
+    runtime_decisions_test.cpp
 )
 target_link_libraries(keel_tests PRIVATE keel::keel)
 if(MSVC)
@@ -77,7 +78,7 @@ keel_compile_fail(run_rvalue_member "RunTargetNotCallable<int ?\\(.*Cli::\\*\\)\
 keel_compile_fail(run_not_callable "RunNotCallable<")
 keel_compile_fail(run_not_an_app "NotAnApp<Cli>")
 keel_compile_fail(run_generic_lambda_error "nope")
-keel_compile_fail(ambiguous_dependency "(AmbiguousDependency<Service, ?Storage.*or depend on keel::All<Interface> to use all of them|or depend on keel::All<Interface> to use all of them.*AmbiguousDependency<Service, ?Storage)")
+keel_compile_fail(ambiguous_dependency "(AmbiguousDependency<Service, ?Storage.*list keel::Alternative<Interface> instead|list keel::Alternative<Interface> instead.*AmbiguousDependency<Service, ?Storage)")
 keel_compile_fail(ambiguous_optional "AmbiguousDependency<Service, ?Storage, ?keel::detail::TypeList<DiskStorage, ?MemoryStorage ?> ?>")
 keel_compile_fail(provides_without_deriving "NotDerivedFromInterface<DiskStorage, ?Storage>")
 keel_compile_fail(provides_private_base "NotDerivedFromInterface<DiskStorage, ?Storage>")
@@ -115,3 +116,11 @@ keel_compile_fail(init_after_all "InvalidDependency<PluginMenu, ?keel::InitAfter
 keel_compile_fail(all_and_optional_all "a dependency is listed twice")
 keel_compile_fail(init_after_and_all "a dependency is listed twice")
 keel_compile_fail(two_composites "DependencyCycle<keel::detail::TypeList<Local, ?Remote> ?>")
+keel_compile_fail(mixed_alternative "MixedProviders<Cache, ?keel::detail::TypeList<MemoryCache ?>, ?keel::detail::TypeList<RedisCache ?> ?>")
+keel_compile_fail(provides_and_alternative "keel::Provides<I> and keel::Alternative<I> count as the same")
+keel_compile_fail(invalid_alternative "InvalidDependency<RedisCache, ?keel::Alternative<const Cache> ?>")
+keel_compile_fail(alternative_without_deriving "NotDerivedFromInterface<RedisCache, ?Cache>")
+keel_compile_fail(root_get_mixed_alternative "MixedProviders<Cache, ?keel::detail::TypeList<MemoryCache ?>, ?keel::detail::TypeList<RedisCache ?> ?>")
+keel_compile_fail(run_mixed_alternative "MixedProviders<Cache, ?keel::detail::TypeList<MemoryCache ?>, ?keel::detail::TypeList<RedisCache ?> ?>")
+keel_compile_fail(alternative_cycle "DependencyCycle<keel::detail::TypeList<Repository, ?MemoryCache ?> ?>")
+keel_compile_fail(mixed_alternative_many_uses "MixedProviders<Cache, ?keel::detail::TypeList<MemoryCache ?>, ?keel::detail::TypeList<RedisCache ?> ?>")
