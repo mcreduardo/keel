@@ -5,6 +5,7 @@ add_executable(keel_tests
     lifecycle_test.cpp
     optional_test.cpp
     init_after_test.cpp
+    run_test.cpp
 )
 target_link_libraries(keel_tests PRIVATE keel::keel)
 if(MSVC)
@@ -38,7 +39,8 @@ function(keel_compile_fail name pattern)
     set_tests_properties(compile_fail.${name} PROPERTIES RESOURCE_LOCK keel_build_tree)
 endfunction()
 
-# MSVC prints template arguments without a space after the comma: ", ?" matches both.
+# MSVC prints template arguments without a space after the comma: ", ?" matches both. It
+# also adds a calling convention to member function pointers: "int (__cdecl Cli::*)()".
 keel_compile_fail(undeclared_dependency "requires T to be listed in this component")
 keel_compile_fail(duplicate_dependency "a dependency is listed twice")
 keel_compile_fail(missing_dependency "MissingDependency<Server, ?Logger>")
@@ -62,3 +64,10 @@ keel_compile_fail(find_component_on_init_after "T is declared keel::InitAfter<T>
 keel_compile_fail(required_and_init_after "a dependency is listed twice")
 keel_compile_fail(init_after_cycle "DependencyCycle<keel::detail::TypeList<Pool, ?Worker> ?>")
 keel_compile_fail(invalid_init_after "InvalidDependency<Server, ?keel::InitAfter<keel::Optional<Metrics> ?> ?>")
+keel_compile_fail(throwing_stop "exception specification")
+keel_compile_fail(run_member_of_non_component "RunTargetNotComposed<Cli, ?int")
+keel_compile_fail(run_member_not_callable "RunTargetNotCallable<int ?\\(.*Cli::\\*\\)\\(int\\)")
+keel_compile_fail(run_rvalue_member "RunTargetNotCallable<int ?\\(.*Cli::\\*\\)\\(\\) ?&&")
+keel_compile_fail(run_not_callable "RunNotCallable<")
+keel_compile_fail(run_not_an_app "NotAnApp<Cli>")
+keel_compile_fail(run_generic_lambda_error "nope")

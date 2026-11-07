@@ -89,6 +89,15 @@ using Concat = typename ConcatImpl<Lists...>::type;
 template <class T>
 inline constexpr bool alwaysFalse = false;
 
+// The class of a pointer to member function: `R C::*` also matches `R (C::*)(Args...)`,
+// with R deduced as the function type `R(Args...)`.
+template <class M>
+struct MemberOf;
+template <class R, class C>
+struct MemberOf<R C::*> {
+    using type = C;
+};
+
 struct EmptySplit {
     using required = TypeList<>;
     using optional = TypeList<>;
@@ -179,9 +188,26 @@ public:
     std::string_view componentName() const noexcept { return name_; }
 
 protected:
-    /// Acquire and configure. Throw to abort startup.
+    // The lifecycle hooks, in the order they run. Override the ones you need, and mark them
+    // `override`: without it, a hook with a different signature (`void start(int)`)
+    // compiles and is never called.
+
+    /// Acquire and configure: open files, bind sockets, read settings. Runs after the
+    /// init() of every dependency. Throw to abort startup. If it throws, neither stop() nor
+    /// deinit() is called on this component: undo its partial work before throwing.
     virtual void init() {}
-    /// Release. Runs in reverse order. Must not throw: handle or log cleanup failures here.
+    /// Begin activity: accept connections, start threads. Runs after the init() of every
+    /// component in the app, and after the start() of every dependency. Throw to abort
+    /// startup. If it throws, deinit() is called on this component but stop() is not: undo
+    /// its partial work before throwing (e.g. join a thread it launched).
+    virtual void start() {}
+    /// End activity: stop accepting, drain work. Runs in reverse order: the components
+    /// that depend on this one are already stopped. Must not throw: handle or log failures
+    /// here.
+    virtual void stop() noexcept {}
+    /// Release. Runs in reverse order, after every stop(). Dependencies are still
+    /// initialized, so they can still be used. Must not throw: handle or log cleanup
+    /// failures here.
     virtual void deinit() noexcept {}
 
 private:
@@ -189,7 +215,8 @@ private:
     template <class...>
     friend class keel::Component;
 
-    enum class State : unsigned char { created, initialized, deinitialized };
+    // A stopped component is initialized again.
+    enum class State : unsigned char { created, initialized, started, deinitialized };
 
     // The dependency with this id, or nullptr if it isn't composed and not required.
     void* lookup(TypeId id, std::string_view dependency, bool required) const;
@@ -223,6 +250,8 @@ public:
     }
 
     void init();
+    void start();
+    void stop() noexcept;
     void deinit() noexcept;
 
     /// init() was called: components may look up their dependencies.
@@ -234,8 +263,11 @@ public:
     }
 
 private:
-    enum class State { building, initialized, failed, deinitialized };
+    // stopped vs initialized: the components are in the same state, but a stopped app
+    // can't be started again.
+    enum class State { building, initialized, started, stopped, failed, deinitialized };
 
+    void stopAll() noexcept;
     void deinitAll() noexcept;
 
     std::vector<ComponentBase*> components_;  // in init order
@@ -601,6 +633,61 @@ namespace detail {
 template <class List>
 class AppImpl;
 
+// What run(fn) returns after a mistake in fn: it converts to anything and supports the
+// usual operators, so that in conversion contexts such as `return app.run(...);` the
+// mistake is the only error. Never defined: such code never compiles.
+struct RunMistake {
+    template <class T>
+    operator T() const;
+
+#define KEEL_RUN_MISTAKE_OPERATOR(op)                         \
+    template <class T>                                        \
+    friend RunMistake operator op(const RunMistake&, const T&); \
+    template <class T>                                        \
+    friend RunMistake operator op(const T&, const RunMistake&);
+    KEEL_RUN_MISTAKE_OPERATOR(==)
+    KEEL_RUN_MISTAKE_OPERATOR(!=)
+    KEEL_RUN_MISTAKE_OPERATOR(<)
+    KEEL_RUN_MISTAKE_OPERATOR(>)
+    KEEL_RUN_MISTAKE_OPERATOR(<=)
+    KEEL_RUN_MISTAKE_OPERATOR(>=)
+    KEEL_RUN_MISTAKE_OPERATOR(+)
+    KEEL_RUN_MISTAKE_OPERATOR(-)
+    KEEL_RUN_MISTAKE_OPERATOR(*)
+    KEEL_RUN_MISTAKE_OPERATOR(/)
+    KEEL_RUN_MISTAKE_OPERATOR(%)
+#undef KEEL_RUN_MISTAKE_OPERATOR
+};
+
+// Diagnostics of run(fn), each named after the mistake.
+template <class C, class MemberFunction>
+struct RunTargetNotComposed : RunMistake {
+    static_assert(alwaysFalse<C>,
+                  "keel: run(&C::f) calls f on the component C, and the C in RunTargetNotComposed<C, F> is not in "
+                  "this App's compose<...> list (a member function inherited from a base class names the base)");
+};
+template <class MemberFunction>
+struct RunTargetNotCallable : RunMistake {
+    static_assert(alwaysFalse<MemberFunction>,
+                  "keel: run(&C::f) calls f on the component (an lvalue C&) with no arguments, and the F in "
+                  "RunTargetNotCallable<F> can't be called that way");
+};
+template <class Fn>
+struct RunNotCallable : RunMistake {
+    static_assert(alwaysFalse<Fn>,
+                  "keel: run(fn) needs fn callable with no arguments or with the App (App&), or a member function "
+                  "of a component (&C::f); the Fn in RunNotCallable<Fn> is neither");
+};
+template <class T>
+struct NotAnApp : RunMistake {
+    static_assert(alwaysFalse<T>, "keel: keel::run<AppType>(...) needs a keel::App<...>; the T in NotAnApp<T> isn't one");
+};
+
+// A class whose operator() is a single non-template function (not a generic lambda).
+template <class F>
+inline constexpr bool hasPlainCallOperator = requires { &F::operator(); };
+
+
 // The composition is checked when the class is instantiated. The graph analysis only runs
 // on a list of distinct, concrete components, so a list that isn't one reports that and
 // nothing else.
@@ -631,7 +718,19 @@ public:
 
     ~AppImpl() { registry_.deinit(); }
 
+    /// Calls init() on every component, in dependency order. If one throws, the components
+    /// already initialized are deinitialized in reverse, and the exception propagates.
+    /// Callable once.
     void init() { registry_.init(); }
+    /// Calls start() on every component, in dependency order. Requires a successful init().
+    /// If one throws, the components already started are stopped in reverse, then every
+    /// component is deinitialized in reverse, and the exception propagates. Callable once.
+    void start() { registry_.start(); }
+    /// Calls stop() on every started component, in reverse order. Does nothing if the app
+    /// isn't started.
+    void stop() noexcept { registry_.stop(); }
+    /// Stops the app if it is started, then calls deinit() on every component, in reverse
+    /// order. Does nothing the second time. The destructor calls it too.
     void deinit() noexcept { registry_.deinit(); }
 
     /// For the composition root.
@@ -639,6 +738,55 @@ public:
     T& getComponent() {
         static_assert(contains<T, TypeList<Cs...>>, "keel: T is not a component of this App");
         return storage_.template get<T>();
+    }
+
+protected:
+    // init, start, fn, then stop and deinit, also if fn throws. Self is the App, which
+    // run(fn) passes to fn.
+    template <class Self, class Fn>
+    static decltype(auto) runWith(Self& self, Fn&& fn) {
+        Registry& registry = static_cast<AppImpl&>(self).registry_;
+        registry.init();
+        registry.start();
+        struct Shutdown {
+            Registry& registry;
+            ~Shutdown() { registry.deinit(); }  // stops first
+        } shutdown{registry};
+        return call(self, std::forward<Fn>(fn));
+    }
+
+    // fn(self), fn(), or a member function of one of the components (&Server::serve).
+    // A mistake gives exactly one error: one of the diagnostics above, or the compiler's
+    // own error inside a generic callable.
+    template <class Self, class Fn>
+    static decltype(auto) call([[maybe_unused]] Self& self, Fn&& fn) {
+        using F = std::remove_cvref_t<Fn>;
+        if constexpr (std::is_member_function_pointer_v<F>) {
+            using C = typename MemberOf<F>::type;
+            if constexpr (!contains<C, TypeList<Cs...>>) {
+                return RunTargetNotComposed<C, F>{};
+            } else if constexpr (!std::is_invocable_v<F, C&>) {
+                return RunTargetNotCallable<F>{};
+            } else {
+                return (self.template getComponent<C>().*fn)();
+            }
+        } else if constexpr (std::is_invocable_v<Fn>) {
+            // Callable with no arguments. If it also takes the App, it gets the App.
+            if constexpr (std::is_invocable_v<Fn, Self&>) {
+                return std::forward<Fn>(fn)(self);
+            } else {
+                return std::forward<Fn>(fn)();
+            }
+        } else if constexpr (std::is_class_v<F> && !hasPlainCallOperator<F>) {
+            // A generic lambda (or an overloaded function object): called with the App
+            // directly, so an error in its body is reported once, by the compiler, instead
+            // of turning into "not callable".
+            return std::forward<Fn>(fn)(self);
+        } else if constexpr (std::is_invocable_v<Fn, Self&>) {
+            return std::forward<Fn>(fn)(self);
+        } else {
+            return RunNotCallable<Fn>{};
+        }
     }
 
 private:
@@ -655,13 +803,49 @@ private:
 
 /// A statically composed application. Components in any order: keel checks the
 /// composition at compile time and derives the order from the declared dependencies.
+/// Drive it with run(fn), or step by step: init(), start(), ..., stop(), deinit().
 template <class... Components>
 class App : public detail::AppImpl<detail::TypeList<Components...>> {
     using Base = detail::AppImpl<detail::TypeList<Components...>>;
 
 public:
     using Base::Base;
+
+    /// Runs the whole lifecycle: init(), start(), then fn, then stop() and deinit(), also
+    /// if fn throws. Returns what fn returns. fn is one of:
+    ///   app.run([] { waitForShutdown(); });          // a callable with no arguments
+    ///   app.run([](ServerApp& running) { ... });     // a callable taking the App
+    ///   app.run(&Server::serve);                     // a member function of a component,
+    ///                                                // called on that component
+    /// A callable that accepts both gets the App. Name the App type to write the parameter
+    /// without templates:
+    ///   using ServerApp = keel::App<Server, Config>;
+    ///   ServerApp app;
+    ///   app.run([](ServerApp& running) { running.getComponent<Server>().serve(); });
+    /// If init() or start() throws, the exception propagates after the rollback, and fn
+    /// doesn't run. Calling run() after init() throws keel::Error. A reference returned by fn
+    /// refers to an object that is already deinitialized when run() returns.
+    template <class Fn>
+    decltype(auto) run(Fn&& fn) {
+        return Base::runWith(*this, std::forward<Fn>(fn));
+    }
+    // So that run(&C::f) picks the overload of f that takes no arguments.
+    template <class R, class C>
+    decltype(auto) run(R (C::*fn)()) {
+        return Base::runWith(*this, fn);
+    }
+    template <class R, class C>
+    decltype(auto) run(R (C::*fn)() const) {
+        return Base::runWith(*this, fn);
+    }
 };
+
+namespace detail {
+template <class T>
+inline constexpr bool isApp = false;
+template <class... Cs>
+inline constexpr bool isApp<App<Cs...>> = true;
+}  // namespace detail
 
 /// `auto app = keel::compose<Settings, Console, Greeter>(argc, argv);`
 /// Each component constructible from the arguments receives them; the others are
@@ -669,6 +853,36 @@ public:
 template <class... Components, class... Args>
 App<Components...> compose(Args&&... args) {
     return App<Components...>(std::forward<Args>(args)...);
+}
+
+namespace detail {
+template <class AppType, class Fn, class... Args>
+auto runApp(Fn&& fn, Args&&... args) {
+    if constexpr (!isApp<AppType>) {
+        return NotAnApp<AppType>{};
+    } else {
+        AppType app(std::forward<Args>(args)...);
+        return app.run(std::forward<Fn>(fn));
+    }
+}
+}  // namespace detail
+
+/// Constructs AppType from args and runs it (see App::run), e.g. when main() picks one of
+/// several compositions: `return keel::run<ServerApp>(&Server::serve, argc, argv);`
+/// Returns what fn returns, by value: the app is gone by then, so a reference result is
+/// copied.
+template <class AppType, class Fn, class... Args>
+auto run(Fn&& fn, Args&&... args) {
+    return detail::runApp<AppType>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+}
+// So that run(&C::f) picks the overload of f that takes no arguments.
+template <class AppType, class R, class C, class... Args>
+auto run(R (C::*fn)(), Args&&... args) {
+    return detail::runApp<AppType>(fn, std::forward<Args>(args)...);
+}
+template <class AppType, class R, class C, class... Args>
+auto run(R (C::*fn)() const, Args&&... args) {
+    return detail::runApp<AppType>(fn, std::forward<Args>(args)...);
 }
 
 // ===========================================================================
@@ -693,6 +907,7 @@ inline void* ComponentBase::lookup(TypeId id, std::string_view dependency, bool 
     }
     switch (b->owner->state_) {
         case State::initialized:
+        case State::started:
             return b->object;
         case State::created:
             throw Error(concat({name_, " used ", dependency, " before it was initialized"}));
@@ -700,6 +915,16 @@ inline void* ComponentBase::lookup(TypeId id, std::string_view dependency, bool 
             break;
     }
     throw Error(concat({name_, " used ", dependency, " after it was deinitialized"}));
+}
+
+// Stops every started component, in reverse order.
+inline void Registry::stopAll() noexcept {
+    for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
+        ComponentBase& c = **it;
+        if (c.state_ != ComponentBase::State::started) continue;
+        c.stop();
+        c.state_ = ComponentBase::State::initialized;
+    }
 }
 
 // Deinitializes every initialized component, in reverse order.
@@ -727,8 +952,43 @@ inline void Registry::init() {
     state_ = State::initialized;
 }
 
+inline void Registry::start() {
+    switch (state_) {
+        case State::initialized:
+            break;
+        case State::building:
+            throw Error("keel: start() called before init()");
+        case State::started:
+        case State::stopped:
+            throw Error("keel: start() can be called only once per App (no restart after stop())");
+        case State::failed:
+            throw Error("keel: start() after a failed init() or start()");
+        case State::deinitialized:
+            throw Error("keel: start() called after deinit()");
+    }
+    state_ = State::failed;  // until proven otherwise
+    try {
+        for (ComponentBase* c : components_) {
+            c->start();
+            c->state_ = ComponentBase::State::started;
+        }
+    } catch (...) {
+        stopAll();  // roll back what was started, then everything initialized
+        deinitAll();
+        throw;
+    }
+    state_ = State::started;
+}
+
+inline void Registry::stop() noexcept {
+    if (state_ != State::started) return;
+    state_ = State::stopped;
+    stopAll();
+}
+
 inline void Registry::deinit() noexcept {
-    if (state_ != State::initialized) return;
+    stop();
+    if (state_ != State::initialized && state_ != State::stopped) return;
     state_ = State::deinitialized;
     deinitAll();
 }

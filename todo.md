@@ -29,3 +29,25 @@
   exact type. The same goes for a T that is a class but not a component
   (`InitAfter<std::string>`). Revisit with interfaces (`Provides<I>`); a check for "a
   composed component derives from T" would need T to be complete.
+
+- **`start()` runs once per App.** After `stop()` the app can only be deinitialized;
+  `start()` again throws `keel::Error`. Alternative: allow stop/start cycles (restart
+  without re-init), as `framework/` does. Not done because every component would have to
+  support being started again, and nothing needs it yet.
+
+- **A failed `start()` deinitializes everything.** Like a failed `init()`, the app is then
+  done: started components are stopped in reverse, every component is deinitialized, the
+  exception propagates. Alternative (the `framework/` implementation, whose rollback only
+  stops): leave the app initialized for the caller to deinit or retry. Chosen for one rule:
+  a failed startup leaves nothing running or held.
+
+- **`run(&C::f)` matches C exactly.** A member function inherited from a non-component base
+  class has the base's type (`&Server::serve` is `void (Base::*)()`), so it is reported as
+  not composed. Revisit with interfaces (`Provides<I>`): a base implemented by exactly one
+  component could resolve to it.
+
+- **A generic lambda passed to `run(fn)` is called with the App without checking first.**
+  So an error in its body is reported once, by the compiler, instead of a second
+  "not callable" error from keel. Trade-off: a generic lambda that can't take the App at
+  all (`[](auto x, auto y) {}`) gets the compiler's "no matching function" rather than
+  keel's `RunNotCallable`. Non-generic callables are still checked by keel.
