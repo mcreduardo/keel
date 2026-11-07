@@ -13,6 +13,8 @@ class Console : public keel::Component<keel::Provides<Shell>>, public Shell {
     int serve() override { return 0; }
 };
 
+static_assert(keel::isValid<Terminal, Console>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Terminal, Console>();
     return app.run(&Shell::serve);

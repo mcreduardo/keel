@@ -5,6 +5,8 @@
 class Clock : public keel::Component<keel::Provides<Clock>> {};
 class FakeClock : public Clock {};
 
+static_assert(keel::isValid<Clock, FakeClock>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Clock, FakeClock>();
     app.getComponent<Clock>();

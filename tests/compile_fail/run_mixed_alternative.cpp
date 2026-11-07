@@ -10,6 +10,8 @@ struct Cache {
 class RedisCache : public keel::Component<keel::Alternative<Cache>>, public Cache {};
 class MemoryCache : public keel::Component<keel::Provides<Cache>>, public Cache {};
 
+static_assert(keel::isValid<RedisCache, MemoryCache>, "isValid disagrees with compose");
+
 int main() {
     keel::App<RedisCache, MemoryCache> app;
     return app.run(&Cache::kind);

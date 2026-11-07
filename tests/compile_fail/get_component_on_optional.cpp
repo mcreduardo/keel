@@ -7,6 +7,8 @@ class Server : public keel::Component<keel::Optional<Metrics>> {
     void init() override { getComponent<Metrics>(); }
 };
 
+static_assert(keel::isValid<Metrics, Server>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Metrics, Server>();
     app.init();

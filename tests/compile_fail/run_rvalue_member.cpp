@@ -7,6 +7,8 @@ public:
     int execute() && { return 0; }
 };
 
+static_assert(keel::isValid<Cli>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Cli>();
     return app.run(&Cli::execute) == 0 ? 0 : 1;

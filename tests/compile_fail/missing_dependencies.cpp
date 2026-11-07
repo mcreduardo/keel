@@ -7,6 +7,8 @@ class Config : public keel::Component<> {};
 class Server : public keel::Component<Logger> {};
 class Exporter : public keel::Component<Config> {};
 
+static_assert(!keel::isValid<Server, Exporter>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Server, Exporter>();
 }

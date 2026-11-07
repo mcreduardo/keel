@@ -11,6 +11,8 @@ class MemoryCache : public keel::Component<keel::Provides<Cache>>, public Cache 
 
 class Service : public keel::Component<Cache> {};
 
+static_assert(!keel::isValid<Service, RedisCache, MemoryCache>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Service, RedisCache, MemoryCache>();
 }

@@ -5,6 +5,8 @@ class Metrics : public keel::Component<> {};
 
 class Server : public keel::Component<keel::InitAfter<keel::Optional<Metrics>>> {};
 
+static_assert(!keel::isValid<Metrics, Server>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Metrics, Server>();
 }

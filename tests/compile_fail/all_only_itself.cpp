@@ -8,6 +8,8 @@ struct HealthCheck {
 
 class AllChecks : public keel::Component<keel::Provides<HealthCheck>, keel::All<HealthCheck>>, public HealthCheck {};
 
+static_assert(!keel::isValid<AllChecks>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<AllChecks>();
 }

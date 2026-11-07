@@ -3,6 +3,8 @@
 
 class Logger : public keel::Component<> {};
 
+static_assert(!keel::isValid<Logger, Logger, Logger>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Logger, Logger, Logger>();
 }

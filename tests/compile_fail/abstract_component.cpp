@@ -6,6 +6,8 @@ public:
     virtual void write() = 0;
 };
 
+static_assert(!keel::isValid<Sink>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Sink>();
 }

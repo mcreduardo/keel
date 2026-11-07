@@ -7,6 +7,8 @@ struct Storage {
 
 class DiskStorage : public keel::Component<keel::Provides<Storage>>, Storage {};
 
+static_assert(!keel::isValid<DiskStorage>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<DiskStorage>();
 }

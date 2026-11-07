@@ -10,6 +10,8 @@ class PluginMenu : public keel::Component<keel::All<keel::Optional<Plugin>>> {
     void init() override { findComponent<Plugin>(); }
 };
 
+static_assert(!keel::isValid<PluginMenu>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<PluginMenu>();
 }

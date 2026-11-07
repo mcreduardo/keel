@@ -11,6 +11,8 @@ class B : public keel::Component<keel::Provides<Storage>>, public Storage {};
 class C : public keel::Component<A, keel::Provides<Storage>>, public Storage {};
 class A : public keel::Component<Storage> {};
 
+static_assert(!keel::isValid<A, B, C>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<A, B, C>();
 }

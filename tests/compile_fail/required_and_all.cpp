@@ -12,6 +12,8 @@ class HealthEndpoint : public keel::Component<HealthCheck, keel::All<HealthCheck
     void init() override { getAll<HealthCheck>(); }
 };
 
+static_assert(!keel::isValid<HealthEndpoint, Database>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<HealthEndpoint, Database>();
 }

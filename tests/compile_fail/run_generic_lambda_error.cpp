@@ -4,6 +4,8 @@
 
 class Cli : public keel::Component<> {};
 
+static_assert(keel::isValid<Cli>, "isValid disagrees with compose");
+
 int main() {
     return keel::run<keel::App<Cli>>([](auto& running) { return running.nope(); });
 }

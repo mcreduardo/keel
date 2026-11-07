@@ -7,6 +7,8 @@ struct Cache {
 
 class RedisCache : public keel::Component<keel::Alternative<const Cache>>, public Cache {};
 
+static_assert(!keel::isValid<RedisCache>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<RedisCache>();
 }

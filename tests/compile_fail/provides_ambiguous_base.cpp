@@ -10,6 +10,8 @@ struct Writer : Storage {};
 
 class DiskStorage : public keel::Component<keel::Provides<Storage>>, public Reader, public Writer {};
 
+static_assert(!keel::isValid<DiskStorage>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<DiskStorage>();
 }

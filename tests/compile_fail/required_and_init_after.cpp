@@ -8,6 +8,8 @@ class Server : public keel::Component<Logger, keel::InitAfter<Logger>> {
     void init() override { getComponent<Logger>(); }
 };
 
+static_assert(!keel::isValid<Logger, Server>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Logger, Server>();
     app.init();

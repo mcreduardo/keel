@@ -3,6 +3,8 @@
 
 class Hidden : keel::Component<> {};
 
+static_assert(!keel::isValid<Hidden>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Hidden>();
 }

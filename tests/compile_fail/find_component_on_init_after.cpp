@@ -7,6 +7,8 @@ class Server : public keel::Component<keel::InitAfter<Migrations>> {
     void init() override { findComponent<Migrations>(); }
 };
 
+static_assert(keel::isValid<Migrations, Server>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Migrations, Server>();
     app.init();

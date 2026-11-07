@@ -13,6 +13,8 @@ class Middle : public keel::Component<A> {};
 class C : public keel::Component<Middle, D> {};
 class D : public keel::Component<C> {};
 
+static_assert(!keel::isValid<A, B, Middle, C, D>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<A, B, Middle, C, D>();
 }

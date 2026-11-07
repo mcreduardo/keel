@@ -9,6 +9,8 @@ class DiskStorage : public keel::Component<keel::Provides<Storage>, keel::Provid
 
 class Service : public keel::Component<Storage> {};
 
+static_assert(!keel::isValid<Service, DiskStorage>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Service, DiskStorage>();
 }

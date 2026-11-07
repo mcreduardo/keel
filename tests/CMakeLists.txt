@@ -9,6 +9,8 @@ add_executable(keel_tests
     interfaces_test.cpp
     all_test.cpp
     runtime_decisions_test.cpp
+    bundle_test.cpp
+    is_valid_test.cpp
 )
 target_link_libraries(keel_tests PRIVATE keel::keel)
 if(MSVC)
@@ -124,3 +126,12 @@ keel_compile_fail(root_get_mixed_alternative "MixedProviders<Cache, ?keel::detai
 keel_compile_fail(run_mixed_alternative "MixedProviders<Cache, ?keel::detail::TypeList<MemoryCache ?>, ?keel::detail::TypeList<RedisCache ?> ?>")
 keel_compile_fail(alternative_cycle "DependencyCycle<keel::detail::TypeList<Repository, ?MemoryCache ?> ?>")
 keel_compile_fail(mixed_alternative_many_uses "MixedProviders<Cache, ?keel::detail::TypeList<MemoryCache ?>, ?keel::detail::TypeList<RedisCache ?> ?>")
+keel_compile_fail(bundle_duplicate "DuplicateComponent<Logger>")
+keel_compile_fail(bundle_not_a_component "NotAComponent<Settings>")
+keel_compile_fail(bundle_missing_dependency "MissingDependency<Router, ?Logger>")
+keel_compile_fail(empty_composition "EmptyComposition<>")
+keel_compile_fail(bundle_as_dependency "BundleAsDependency<Server, ?keel::Bundle<Config, ?Logger ?> ?>")
+keel_compile_fail(duplicate_bundle "DuplicateBundle<keel::Bundle<Config, ?Logger ?> ?>")
+keel_compile_fail(reference_dependency "InvalidDependency<Server, ?Config ?&>")
+keel_compile_fail(require_valid "MissingDependency<Server, ?Logger>")
+keel_compile_fail(require_valid_duplicate_entry "a dependency is listed twice")

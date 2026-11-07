@@ -9,6 +9,8 @@ public:
     int execute() { return 0; }
 };
 
+static_assert(keel::isValid<Logger>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Logger>();
     return app.run(&Cli::execute);

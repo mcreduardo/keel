@@ -7,6 +7,8 @@ class FakeClock : public Clock {};
 
 class Report : public keel::Component<keel::All<Clock>> {};
 
+static_assert(!keel::isValid<Report, Clock, FakeClock>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Report, Clock, FakeClock>();
 }

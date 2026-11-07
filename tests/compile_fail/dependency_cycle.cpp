@@ -10,6 +10,8 @@ class Q : public keel::Component<P> {};
 class R : public keel::Component<Q> {};
 class Outside : public keel::Component<P> {};
 
+static_assert(!keel::isValid<Outside, P, Q, R>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Outside, P, Q, R>();
 }

@@ -334,6 +334,12 @@ template <std::size_t... Is>
 auto reversedParts(std::index_sequence<Is...>) -> keel::App<Census, Part<appSize - 1 - static_cast<int>(Is)>...>;
 using LargeApp = decltype(reversedParts(std::make_index_sequence<appSize>{}));
 
+template <class App>
+inline constexpr bool validApp = false;
+template <class... Cs>
+inline constexpr bool validApp<keel::App<Cs...>> = keel::isValid<Cs...>;
+static_assert(validApp<LargeApp>);
+
 }  // namespace
 
 TEST(a_large_app_composes) {

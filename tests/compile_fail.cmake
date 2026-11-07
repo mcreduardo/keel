@@ -2,6 +2,12 @@
 # PATTERN. With COUNT_ERRORS (GCC/Clang output), it must also report exactly ERRORS
 # errors: keel promises one error per mistake.
 #
+# Each test that composes something also asserts keel::isValid on the same list, before
+# compose: false if the list itself is the mistake, true if the mistake is elsewhere (a
+# component's body, a root call, run()). The guard's message is "isValid disagrees with
+# compose", so the output must not mention isValid: neither that message nor (in the
+# compiler's instantiation notes) an error that isValid caused itself.
+#
 #   cmake -DBUILD_DIR=... -DTARGET=... -DCONFIG=... -DPATTERN=... -DCOUNT_ERRORS=ON -DERRORS=1
 #         -P compile_fail.cmake
 set(config_args "")
@@ -19,6 +25,9 @@ if(result EQUAL 0)
 endif()
 if(NOT output MATCHES "${PATTERN}")
     message(FATAL_ERROR "${TARGET} failed without the expected diagnostic '${PATTERN}':\n${output}")
+endif()
+if(output MATCHES "isValid")
+    message(FATAL_ERROR "${TARGET}: keel::isValid is part of the diagnostic:\n${output}")
 endif()
 if(COUNT_ERRORS)
     string(REGEX MATCHALL "error: " errors "${output}")

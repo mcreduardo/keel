@@ -10,6 +10,8 @@ class MemoryStorage : public keel::Component<keel::Provides<Storage>>, public St
 
 class Service : public keel::Component<keel::Optional<Storage>> {};
 
+static_assert(!keel::isValid<DiskStorage, Service, MemoryStorage>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<DiskStorage, Service, MemoryStorage>();
 }

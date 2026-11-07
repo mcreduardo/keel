@@ -175,3 +175,45 @@
   recommends `override`. Options: rename the hook to something unlikely to collide
   (`keelEnabled()`, `isEnabledAtRuntime()`); or detect a non-overriding `enabled` at compile
   time. The name is kept for now because `framework/` and the posts use it. erocha decides.
+
+- **A component in two bundles is a duplicate.** Bundles are expanded in place into one
+  list, and a component listed twice is `DuplicateComponent<T>` (its message mentions
+  bundles), as in a plain `compose<...>` list. A bundle reached twice (listed twice, or also
+  inside another bundle) is one `DuplicateBundle<B>`, not one error per component.
+  Alternative: merge duplicates (set semantics), so overlapping bundles
+  (`Bundle<Logger, Database>` and `Bundle<Logger, HttpServer>`) compose. Not done: one rule,
+  each component once, and an overlap is often a mistake (two bundles that grew into each
+  other). Overlapping bundles are written as a shared bundle plus the rest. An empty
+  `Bundle<>` is allowed and adds nothing; a list with no components at all is
+  `EmptyComposition<>`.
+
+- **A bundle is not a dependency.** Any entry naming a bundle (`Component<Core>`,
+  `Optional<Core>`, `InitAfter<Core>`, `Provides<Core>`, `All<Core>`) is
+  `BundleAsDependency<C, Bundle<...>>`: list the components used. Alternative: treat it as
+  "depends on each of them". Not done: a component should name what it uses, and the
+  bundle's contents may change without the component noticing.
+
+- **`keel::isValid<...>` is a plain bool; `keel::requireValid<...>` reports.** `isValid`
+  runs the checks of `compose<...>` without reporting them, so `static_assert(!isValid<...>)`
+  and `if constexpr` work. A positive guard in a header uses `requireValid` (true, or the
+  named compile error, via `sizeof(App<...>)`). Alternative: one name with the `framework/`
+  meaning ("true or a compile error"), which can't express "this composition is invalid".
+  The checks are shared, not duplicated: each check's outcome is one type (a `Passed<...>`
+  or the named failure); `compose` derives from the outcomes, `isValid` tests `isPassed<>`
+  on the same outcome types.
+
+- **`isValid` covers the composition, not its uses.** It agrees with `compose<...>` on the
+  list and the declared dependencies, including a duplicate in a component's own list. It
+  doesn't see: misuse inside components (`getComponent<T>()` on an undeclared or optional
+  T), what construction and destruction need (constructor arguments, a missing default
+  constructor, a private or deleted destructor), and the root's `getComponent<T>()` or
+  `run(fn)`. Each compile-fail test that composes something asserts `isValid` (false or
+  true) on the same list with the message "isValid disagrees with compose", and the runner
+  rejects output that mentions `isValid`.
+
+- **Incomplete types poison later checks.** Whether a type is a component is fixed the first
+  time keel asks (`isValid`, `compose`): a guard on a forward-declared component makes it
+  "not a component" for the rest of the file, also after its definition (NotAComponent,
+  whose message says "or isn't defined at this point"). Documented on `isValid`. A dedicated
+  "incomplete" error would need a completeness check that is itself fixed at first use, so
+  it can't do better.

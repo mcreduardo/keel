@@ -10,6 +10,8 @@ class PrometheusMetrics : public keel::Component<>, public Metrics {};
 
 class Server : public keel::Component<keel::Optional<Metrics>> {};
 
+static_assert(!keel::isValid<Server, PrometheusMetrics>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<Server, PrometheusMetrics>();
 }

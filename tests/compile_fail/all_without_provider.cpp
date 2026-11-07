@@ -9,6 +9,8 @@ class Database : public keel::Component<> {};
 
 class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {};
 
+static_assert(!keel::isValid<HealthEndpoint, Database>, "isValid disagrees with compose");
+
 int main() {
     auto app = keel::compose<HealthEndpoint, Database>();
 }
