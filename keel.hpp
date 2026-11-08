@@ -65,7 +65,9 @@ struct Timing {
 /// it. If T is in the app (composed, or an interface one composed component
 /// keel::Provides<>), keel constructs and initializes it before this component (and
 /// deinitializes and destroys it after), and findComponent<T>() returns it, or nullptr if
-/// it is disabled at runtime (enabled()); otherwise findComponent<T>() returns nullptr.
+/// it is a keel::Conditional that is disabled; otherwise findComponent<T>() returns nullptr.
+/// This is how to use a keel::Conditional component: a required dependency on one doesn't
+/// compile (RequiredConditional).
 /// Use findComponent<T>(), not getComponent<T>(). When T is in the app, the dependency
 /// counts like a required one: a cycle through it, or two providers of T (unless each is a
 /// keel::Alternative<T>), is a compile error. So is T absent while a composed component derives from it without
@@ -102,28 +104,37 @@ template <class I>
 struct Provides {};
 
 /// Like keel::Provides<I>, for one of several implementations of I that configuration
-/// chooses between at runtime. Each one overrides enabled(), and one of them returns true:
-///   class RedisCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache {
+/// chooses between at runtime. Each one is a keel::Conditional, and one of them is enabled:
+///   class RedisCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache,
+///                      public keel::Conditional {
 ///       bool enabled() const override { return getComponent<Config>().cache() == "redis"; }
 ///   };
-///   class MemoryCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache {
+///   class MemoryCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache,
+///                       public keel::Conditional {
 ///       bool enabled() const override { return getComponent<Config>().cache() == "memory"; }
 ///   };
 /// Other components depend on plain Cache (or keel::Optional<Cache>) and get the enabled one.
 /// They are initialized after every alternative, so the choice is made first. When such a
 /// component is initialized, init() throws keel::Error if no alternative is enabled (a
-/// keel::Optional<Cache> gets nullptr instead) or if several are. keel::All<Cache> gets the
-/// enabled ones. A keel::Provides<Cache> next to the alternatives is a compile error
-/// (AmbiguousDependency) as soon as a component needs one Cache.
+/// keel::Optional<Cache> gets nullptr instead) or if several are: the only composition
+/// failures keel leaves to runtime. keel::Optional<keel::All<Cache>> gets the enabled ones.
+/// An alternative that doesn't derive from keel::Conditional is a compile error
+/// (AlternativeNotConditional), and so is a keel::Provides<Cache> next to the alternatives
+/// (MixedProviders) as soon as a component needs one Cache.
+///
+/// When the implementations need the same dependencies, a plain component that creates the
+/// configured one in init() is simpler (docs/runtime-decisions.md).
 template <class I>
 struct Alternative {};
 
 /// Every component that provides the interface I (lists keel::Provides<I>, or is I
 /// itself), for plug-in style lists: health checks, routes, sensors. Use getAll<I>(), which
 /// returns the enabled ones in init order (each after the ones it depends on). At least
-/// one must be composed, else it is a compile error (MissingProvider), and enabled, else
-/// init() throws keel::Error; write keel::Optional<keel::All<I>> if none is fine. Each provider is constructed and
-/// initialized before this component, and deinitialized and destroyed after it. A
+/// one must be composed, else it is a compile error (MissingProvider), and at least one of
+/// them must not be a keel::Conditional, so the list is never empty
+/// (OnlyConditionalProviders); write keel::Optional<keel::All<I>> if none is fine. Each
+/// provider is constructed and initialized before this component, and deinitialized and
+/// destroyed after it. A
 /// component that provides I itself is not part of its own list, nor is one that lists
 /// keel::All<I> and derives from I without providing it:
 ///   class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> { ... };
@@ -133,8 +144,9 @@ struct Alternative {};
 template <class I>
 struct All {};
 
-/// Runs this component's enabled() and init() on a thread of its own, so that a slow init()
-/// (connecting to a database, loading a model) doesn't hold up unrelated components:
+/// Runs this component's init() (and enabled(), for a keel::Conditional) on a thread of its
+/// own, so that a slow init() (connecting to a database, loading a model) doesn't hold up
+/// unrelated components:
 ///   class Database : public keel::Component<Config, Logger, keel::AsyncInit> { ... };
 /// Its init() starts as soon as every component it is ordered after has finished init() (or
 /// is disabled). Everything those init()s did is visible to it.
@@ -157,7 +169,7 @@ struct All {};
 /// its dependencies: one thread per async component. App::init() returns only when every
 /// thread has finished.
 ///
-/// If an init() (or enabled()) throws, nothing new starts, and the init()s already running
+/// If an init() (or an enabled()) throws, nothing new starts, and the init()s already running
 /// finish. Everything initialized is then deinitialized in reverse order, on the calling
 /// thread. The exception of the earliest failed component in init order is rethrown; the
 /// others are dropped, and which components get to fail depends on timing. Each failure is
@@ -203,6 +215,53 @@ class Component;
 
 template <class... Components>
 class App;
+
+namespace detail {
+class Registry;
+}
+
+/// A component that configuration may turn off. Derive from it publicly, next to
+/// keel::Component<...>, and override enabled():
+///   class Uplink : public keel::Component<Config, Recorder>, public keel::Conditional {
+///       bool enabled() const override { return !getComponent<Config>().uplinkUrl().empty(); }
+///       void start() override;  // only called if enabled
+///   };
+/// keel asks enabled() once, just before the component's init(), on the same thread (its
+/// own thread with keel::AsyncInit). Its dependencies are initialized by then, so it can use
+/// them (typically a Config). If it returns false, the component is disabled: none of its
+/// hooks run (it is still constructed and destroyed). Throw to abort startup, as from
+/// init().
+///
+/// Nothing may require a conditional component, since it may not be there, except through
+/// keel::Alternative<I>, whose choice is checked at startup. A dependency on a conditional
+/// T is keel::Optional<T> (findComponent<T>() returns nullptr while it is disabled),
+/// keel::InitAfter<T> or keel::Optional<keel::All<I>>. A plain T, or an interface I that
+/// only a conditional keel::Provides<I> component provides, doesn't compile
+/// (RequiredConditional, RequiredConditionalProvider), and neither does a keel::All<I>
+/// whose providers are all conditional (OnlyConditionalProviders), nor run(&T::f) on one
+/// (RunTargetConditional). Several implementations of I that configuration chooses between
+/// are each a keel::Alternative<I> and a keel::Conditional; a dependent that requires I
+/// fails at startup if none (or several) is enabled.
+///
+/// Only components that derive from keel::Conditional are asked: a member function called
+/// enabled() in any other component is its own. The override must be
+/// `bool enabled() const`; with another signature the component stays abstract
+/// (AbstractComponent). Deriving privately, or twice, is InaccessibleConditional. An
+/// interface that declares its own `virtual bool enabled() const`, implemented by a
+/// component that also derives from keel::Conditional, shares one override with it.
+class Conditional {
+protected:
+    /// Whether this component runs. See above.
+    virtual bool enabled() const = 0;
+
+    Conditional() = default;
+    Conditional(const Conditional&) = default;
+    Conditional& operator=(const Conditional&) = default;
+    virtual ~Conditional() = default;
+
+private:
+    friend class detail::Registry;
+};
 
 namespace detail {
 
@@ -429,6 +488,12 @@ template <class T>
 inline constexpr bool couldBeComponent =
     std::is_class_v<T> && !std::is_const_v<T> && !std::is_volatile_v<T> && !isDependencyMarker<T>;
 
+// C is a keel::Conditional that keel can ask: it derives from it publicly and once.
+// (Privately or twice is InaccessibleConditional, at compose time.) False for an
+// incomplete C.
+template <class C>
+inline constexpr bool isConditional = std::is_convertible_v<C*, Conditional*>;
+
 // A C can be used as an I: I could be a component (above) and is C itself or a public,
 // unambiguous base of C. A pointer conversion checks access and ambiguity, and is simply
 // false for an incomplete I (C can't derive from it then).
@@ -523,15 +588,15 @@ class Registry;
 struct Binding;
 
 // An entry of a component's keel::Component<...> list that init() checks (a required
-// dependency, Optional<T> or All<I>): the type it names and how it is used.
+// dependency or Optional<T>, which may resolve to keel::Alternative<>s chosen at runtime):
+// the type it names and how it is used.
 struct Need {
     TypeId id;
     std::string_view (*name)();
     Use use;
 };
 template <class Entry>
-inline constexpr bool checkedAtInit =
-    Split<Entry>::use == Use::required || Split<Entry>::use == Use::optional || Split<Entry>::use == Use::all;
+inline constexpr bool checkedAtInit = Split<Entry>::use == Use::required || Split<Entry>::use == Use::optional;
 
 template <class... Entries>
 inline constexpr std::array<Need, sizeof...(Entries)> needsOf{
@@ -572,22 +637,9 @@ public:
 protected:
     // The lifecycle hooks, in the order they run. Override the ones you need, and mark them
     // `override`: without it, a hook with a different signature (`void start(int)`)
-    // compiles and is never called.
+    // compiles and is never called. (To let configuration turn a component off, derive
+    // from keel::Conditional too.)
 
-    /// Return false to leave this component out at runtime, e.g. from configuration. Asked
-    /// once, just before this component's init() and on the same thread (its own thread
-    /// with keel::AsyncInit); if it returns false, init() and the other hooks don't run (the
-    /// component is still constructed and destroyed). Its dependencies are initialized by
-    /// then, so it can use them (typically a Config). keel hasn't checked
-    /// them yet, though: getAll<I>() may be empty, and a required dependency that is
-    /// disabled throws keel::Error. Components that depend on a disabled one see it as
-    /// absent: findComponent<T>() returns nullptr, getAll<I>() leaves it out, and a required
-    /// dependency on it makes init() throw keel::Error (unless that component is disabled
-    /// too). Throw to abort startup, as from init().
-    /// Write `override`: a wrong signature (`bool enabled()` without const) is a different
-    /// function and is never asked. And a component that already has its own
-    /// `bool enabled() const` overrides this hook with it.
-    virtual bool enabled() const { return true; }
     /// Acquire and configure: open files, bind sockets, read settings. Runs after the
     /// init() of every dependency, on the thread that called App::init(), or on a thread of
     /// its own with keel::AsyncInit. Throw to abort startup. If it throws, neither stop() nor
@@ -615,7 +667,8 @@ private:
     template <class...>
     friend class keel::Component;
 
-    // A stopped component is initialized again. A disabled one stays disabled.
+    // A stopped component is initialized again. A disabled one (a keel::Conditional whose
+    // enabled() returned false) stays disabled.
     enum class State : unsigned char { created, initialized, started, deinitialized, disabled };
 
     // The dependency with this id, or nullptr if it isn't composed and not required.
@@ -631,7 +684,8 @@ private:
     // The bound object, if its owner is initialized; else throws.
     void* use(const Binding& binding, std::string_view dependency) const;
     // Before init(): throws unless every required dependency resolves to one enabled
-    // component, every Optional<T> to at most one, and every All<I> to at least one.
+    // component, and every Optional<T> to at most one. (Only keel::Alternative<>s can fail
+    // that: the rest is checked at compile time.)
     void checkDependencies() const;
 
     // Set when the component is added to an App, then only read.
@@ -639,6 +693,7 @@ private:
     const Need* needs_ = nullptr;  // the entries of the keel::Component<...> list that init() checks
     std::size_t needCount_ = 0;
     std::string_view name_;
+    const Conditional* conditional_ = nullptr;  // the component, if it is a keel::Conditional
     bool asyncInit_ = false;   // keel::AsyncInit
     bool asyncStart_ = false;  // keel::AsyncStart
 
@@ -678,6 +733,7 @@ public:
         base.needs_ = Needs<C>::table.data();
         base.needCount_ = Needs<C>::table.size();
         base.name_ = typeName<C>();
+        if constexpr (isConditional<C>) base.conditional_ = &component;
         base.asyncInit_ = ComponentOf<C>::asyncInit;
         base.asyncStart_ = ComponentOf<C>::asyncStart;
         components_.push_back(&base);
@@ -712,6 +768,8 @@ public:
     // keel::Alternative<>s (else the lookup doesn't compile). Throws if there is none and
     // required, if several alternatives are enabled, or if init() hasn't chosen yet. user
     // names the component that asks, for the messages; empty for the composition root.
+    // (For a component, a required dependency on a single disabled keel::Conditional
+    // doesn't compile; the root's getComponent<T>() can still meet one.)
     const Binding* resolve(TypeId id, std::string_view dependency, std::string_view user, bool required) const;
 
     // Every component bound to id, in init order (empty if none).
@@ -723,7 +781,8 @@ public:
 
     std::span<const Timing> timings() const noexcept { return timings_; }
 
-    // The component at this position of the init order returned false from enabled().
+    // The component at this position of the init order is a keel::Conditional whose
+    // enabled() returned false.
     bool disabled(std::size_t position) const noexcept {
         return components_[position]->state_ == ComponentBase::State::disabled;
     }
@@ -923,8 +982,8 @@ struct AmbiguousDependency {
                   "TypeList<Providers...>> needs one Interface, and each of the Providers is or provides it. "
                   "Compose only one of them, depend on the one you want by its own type, depend on "
                   "keel::All<Interface> to use all of them, or let configuration choose: list "
-                  "keel::Alternative<Interface> instead of keel::Provides<Interface> in each of them, and enable "
-                  "one at runtime (enabled()).");
+                  "keel::Alternative<Interface> instead of keel::Provides<Interface> in each of them, derive each "
+                  "from keel::Conditional, and enable one at runtime.");
 };
 
 template <class Interface, class Provides, class Alternatives>
@@ -935,7 +994,8 @@ struct MixedProviders {
                   "keel: something needs one Interface, and its providers in MixedProviders<Interface, "
                   "TypeList<Provides...>, TypeList<Alternatives...>> are mixed: the Provides are or list "
                   "keel::Provides<Interface>, the Alternatives list keel::Alternative<Interface>. List "
-                  "keel::Alternative<Interface> in each of them to choose one at runtime, or compose only one.");
+                  "keel::Alternative<Interface> in each of them, and derive each from keel::Conditional, to "
+                  "choose one at runtime, or compose only one.");
 };
 
 template <class Component, class Interface>
@@ -947,6 +1007,52 @@ struct MissingProvider {
                   "needs at least one provider, and no composed component (other than Component itself) is or "
                   "provides Interface. Compose one, or depend on keel::Optional<keel::All<Interface>> if none is "
                   "fine.");
+};
+
+template <class Component, class Interface, class Providers>
+inline constexpr bool unconditionalProvider = false;  // only read when the check fails
+template <class Component, class Interface, class Providers>
+struct OnlyConditionalProviders {
+    static_assert(unconditionalProvider<Component, Interface, Providers>,
+                  "keel: the Component in OnlyConditionalProviders<Component, Interface, TypeList<Providers...>> "
+                  "lists keel::All<Interface>, which is never empty, and each of the Providers of Interface is a "
+                  "keel::Conditional that configuration may turn off. Depend on "
+                  "keel::Optional<keel::All<Interface>> if none is fine, or compose a provider that isn't "
+                  "conditional.");
+};
+
+template <class Component, class T>
+inline constexpr bool unconditionalDependency = false;  // only read when the check fails
+template <class Component, class T>
+struct RequiredConditional {
+    static_assert(unconditionalDependency<Component, T>,
+                  "keel: the Component in RequiredConditional<Component, T> requires T, and T is a "
+                  "keel::Conditional that configuration may turn off. Depend on keel::Optional<T> instead, and "
+                  "use findComponent<T>(), which returns nullptr while T is disabled (or keel::InitAfter<T> for "
+                  "ordering only).");
+};
+
+template <class Component, class Interface, class Provider>
+inline constexpr bool unconditionalInterface = false;  // only read when the check fails
+template <class Component, class Interface, class Provider>
+struct RequiredConditionalProvider {
+    static_assert(unconditionalInterface<Component, Interface, Provider>,
+                  "keel: the Component in RequiredConditionalProvider<Component, Interface, Provider> requires "
+                  "Interface, and its one provider, Provider, is a keel::Conditional that configuration may turn "
+                  "off. Depend on keel::Optional<Interface> instead, or compose a provider that is always there "
+                  "(to choose one of several at runtime, make each a keel::Alternative<Interface> and a "
+                  "keel::Conditional).");
+};
+
+template <class Component, class Interface>
+inline constexpr bool conditionalAlternative = false;  // only read when the check fails
+template <class Component, class Interface>
+struct AlternativeNotConditional {
+    static_assert(conditionalAlternative<Component, Interface>,
+                  "keel: the Component in AlternativeNotConditional<Component, Interface> lists "
+                  "keel::Alternative<Interface>, so configuration decides whether it is the one, but it doesn't "
+                  "derive from keel::Conditional. Derive from keel::Conditional publicly and override "
+                  "`bool enabled() const`, or list keel::Provides<Interface> if it is always the one.");
 };
 
 template <class Component, class Interface>
@@ -1209,6 +1315,14 @@ struct Composition<TypeList<Cs...>> {
     // The providers of T other than C: what C's InitAfter<T> and All<T> refer to.
     template <class C, class T>
     static constexpr Row others{(!std::is_same_v<C, Cs> && isProvider<T, Cs>)...};
+    // Those that are always there: not keel::Conditional.
+    template <class C, class T>
+    static constexpr Row unconditionalOthers{(!std::is_same_v<C, Cs> && isProvider<T, Cs> && !isConditional<Cs>)...};
+    template <class C, class T, std::size_t... Is>
+    static auto othersOf(std::index_sequence<Is...>)
+        -> Concat<std::conditional_t<others<C, T>[Is], TypeList<At<Is>>, TypeList<>>...>;
+    template <class C, class T>
+    using Others = decltype(othersOf<C, T>(std::make_index_sequence<size>{}));
 
     // The components other than C that derive from T without being a provider of it: for a
     // dependency of C on T, the likely forgotten keel::Provides<T>.
@@ -1239,10 +1353,14 @@ struct Composition<TypeList<Cs...>> {
         } else if constexpr (!couldBeComponent<T>) {
             return Outcome<InvalidDependency<C, Entry>>{};
         } else if constexpr (use == Use::provided || use == Use::alternative) {
-            if constexpr (implements<C, T>()) {
-                return Outcome<Passed<C, Entry>>{};
-            } else {
+            if constexpr (!implements<C, T>()) {
                 return Outcome<NotDerivedFromInterface<C, T>>{};
+            } else if constexpr (use == Use::alternative && !isConditional<C> &&
+                                 std::is_same_v<T, FirstOr<AlternativesOf<C>, void>>) {
+                // Reported at its first alternative only: one mistake, one error.
+                return Outcome<AlternativeNotConditional<C, T>>{};
+            } else {
+                return Outcome<Passed<C, Entry>>{};
             }
         } else if constexpr (providerCount<T> == 0 || collection) {
             // Nothing is found as T, or, for All<T>, a component may be left out: one that
@@ -1260,6 +1378,8 @@ struct Composition<TypeList<Cs...>> {
                 return Outcome<MissingDependency<C, T>>{};
             } else if constexpr (use == Use::all && count(others<C, T>) == 0) {
                 return Outcome<MissingProvider<C, T>>{};
+            } else if constexpr (use == Use::all && count(unconditionalOthers<C, T>) == 0) {
+                return Outcome<OnlyConditionalProviders<C, T, Others<C, T>>>{};
             } else {
                 return Outcome<Passed<C, Entry>>{};  // absent and optional or ordering only, or a collection
             }
@@ -1267,6 +1387,15 @@ struct Composition<TypeList<Cs...>> {
             return Outcome<Mixed<T>>{};
         } else if constexpr (providerCount<T> > 1 && use != Use::ordering && !chosenAtRuntime<T>) {
             return Outcome<AmbiguousDependency<C, T, Providers<T>>>{};
+        } else if constexpr (use == Use::required && !chosenAtRuntime<T> &&
+                             isConditional<FirstOr<Providers<T>, void>>) {
+            // One provider (several would be ambiguous), which may be turned off.
+            using Provider = FirstOr<Providers<T>, void>;
+            if constexpr (std::is_same_v<Provider, T>) {
+                return Outcome<RequiredConditional<C, T>>{};
+            } else {
+                return Outcome<RequiredConditionalProvider<C, T, Provider>>{};
+            }
         } else {
             return Outcome<Passed<C, Entry>>{};  // InitAfter<T> orders after every provider
         }
@@ -1343,7 +1472,19 @@ template <class T>
 inline constexpr bool concreteType = false;
 template <class T>
 struct AbstractComponent {
-    static_assert(concreteType<T>, "keel: the T in AbstractComponent<T> is abstract: compose concrete components");
+    static_assert(concreteType<T>,
+                  "keel: the T in AbstractComponent<T> is abstract: compose concrete components. (A "
+                  "keel::Conditional must override `bool enabled() const`, const included.)");
+};
+
+template <class T>
+inline constexpr bool accessibleConditional = false;
+template <class T>
+struct InaccessibleConditional {
+    static_assert(accessibleConditional<T>,
+                  "keel: the T in InaccessibleConditional<T> derives from keel::Conditional privately, protectedly "
+                  "or more than once, so keel can't ask its enabled(). Derive from keel::Conditional publicly, "
+                  "once.");
 };
 
 // The pack is always empty; it only makes the assertion depend on a template argument.
@@ -1356,6 +1497,12 @@ template <class T, bool component = derivesFromComponent<T>>
 inline constexpr bool abstractComponent = false;
 template <class T>
 inline constexpr bool abstractComponent<T, true> = std::is_abstract_v<T>;
+
+// Only read for a component (a complete class).
+template <class T, bool component = derivesFromComponent<T>>
+inline constexpr bool inaccessibleConditional = false;
+template <class T>
+inline constexpr bool inaccessibleConditional<T, true> = std::is_base_of_v<Conditional, T> && !isConditional<T>;
 
 template <class... Cs>
 struct ListInfo {
@@ -1374,9 +1521,11 @@ struct ListInfo {
     template <class C, std::size_t I>
     using Check = std::conditional_t<
         earlier<I> == 1, DuplicateComponent<C>,
-        std::conditional_t<earlier<I> == 0 && !derivesFromComponent<C>, NotAComponent<C>,
-                           std::conditional_t<earlier<I> == 0 && abstractComponent<C>, AbstractComponent<C>,
-                                              Passed<C, std::integral_constant<std::size_t, I>>>>>;
+        std::conditional_t<
+            earlier<I> == 0 && !derivesFromComponent<C>, NotAComponent<C>,
+            std::conditional_t<earlier<I> == 0 && inaccessibleConditional<C>, InaccessibleConditional<C>,
+                               std::conditional_t<earlier<I> == 0 && abstractComponent<C>, AbstractComponent<C>,
+                                                  Passed<C, std::integral_constant<std::size_t, I>>>>>>;
 };
 
 // Each check is written once, as an outcome type; each group of checks has a struct that
@@ -1522,9 +1671,10 @@ public:
 protected:
     /// A required dependency. Compiles only if T is listed in keel::Component<...> as a
     /// required dependency (not keel::Optional<T>, keel::InitAfter<T> or keel::All<T>).
-    /// Usable from enabled() and init() on; resolve it in init() and keep the reference.
-    /// With keel::AsyncInit too: T's init() has finished, and what it did is visible.
-    /// For an interface with keel::Alternative<> providers, the enabled one.
+    /// Usable from init() on (and from enabled(), for a keel::Conditional); resolve it in
+    /// init() and keep the reference. With keel::AsyncInit too: T's init() has finished, and
+    /// what it did is visible. For an interface with keel::Alternative<> providers, the
+    /// enabled one.
     template <class T>
     T& getComponent() const {
         // At most one of these fails, and none if the list itself is wrong (checkedAccess).
@@ -1545,9 +1695,10 @@ protected:
     }
 
     /// An optional dependency: nullptr if T is not in the app's keel::compose<...> list, or
-    /// is disabled (enabled() returned false). Compiles only if keel::Optional<T> is listed
-    /// in keel::Component<...>. Usable from enabled() and init() on (throws keel::Error
-    /// before, e.g. from a constructor); resolve it in init() and keep the pointer.
+    /// is a keel::Conditional that is disabled. Compiles only if keel::Optional<T> is listed
+    /// in keel::Component<...>. Usable from init() on, and from enabled() (throws
+    /// keel::Error before, e.g. from a constructor); resolve it in init() and keep the
+    /// pointer.
     template <class T>
     T* findComponent() const {
         if constexpr (detail::isAsyncMarker<T>) {  // as in getComponent()
@@ -1570,11 +1721,11 @@ protected:
 
     /// Every enabled component that provides I (lists keel::Provides<I> or
     /// keel::Alternative<I>, or is I itself), except this one, in init order (each after the
-    /// ones it depends on). Never empty for keel::All<I> (if every provider is disabled,
-    /// init() throws keel::Error); possibly empty for keel::Optional<keel::All<I>>.
-    /// Compiles only if one of the two is listed in keel::Component<...>. Usable from
-    /// enabled() and init() on (throws keel::Error before); resolve it in init() and keep
-    /// the vector:
+    /// ones it depends on): a keel::Conditional that is disabled is left out. Never empty for
+    /// keel::All<I> (some provider isn't conditional); possibly empty for
+    /// keel::Optional<keel::All<I>>. Compiles only if one of the two is listed in
+    /// keel::Component<...>. Usable from init() on, and from enabled() (throws keel::Error
+    /// before); resolve it in init() and keep the vector:
     ///   for (HealthCheck* check : getAll<HealthCheck>()) { ... }
     template <class I>
     std::vector<I*> getAll() const {
@@ -1682,7 +1833,7 @@ struct AmbiguousInterface {
     static_assert(alwaysFalse<Interface>,
                   "keel: getComponent<I>(): each of the Providers in AmbiguousInterface<I, TypeList<Providers...>> "
                   "provides I: get a specific one by its own type (if I itself is one of them, compose only one), "
-                  "or make each of them a keel::Alternative<I>");
+                  "or make each of them a keel::Alternative<I> and a keel::Conditional");
 };
 
 // Diagnostics of run(fn), each named after the mistake.
@@ -1699,11 +1850,19 @@ struct RunTargetAmbiguous : RunMistake {
     static_assert(alwaysFalse<Interface>,
                   "keel: run(&I::f) calls f on the one component that provides I, and each of the Providers in "
                   "RunTargetAmbiguous<I, TypeList<Providers...>> provides it: call it from a lambda on the one "
-                  "you want, or make each of them a keel::Alternative<I>");
+                  "you want, or make each of them a keel::Alternative<I> and a keel::Conditional");
 };
 // MixedProviders (above) is the error; as a base, it is reported once with the others.
 template <class Mixed>
 struct RunTargetMixed : RunMistake, Mixed {};
+template <class C, class Provider>
+struct RunTargetConditional : RunMistake {
+    static_assert(alwaysFalse<C>,
+                  "keel: run(&C::f) calls f on the one component that is or provides C, and the Provider in "
+                  "RunTargetConditional<C, Provider> is a keel::Conditional that configuration may turn off. "
+                  "Call it from a lambda that checks first (app.getComponent<C>() throws keel::Error while it "
+                  "is disabled), or run a member function of a component that is always there");
+};
 template <class MemberFunction>
 struct RunTargetNotCallable : RunMistake {
     static_assert(alwaysFalse<MemberFunction>,
@@ -1759,11 +1918,12 @@ public:
 
     ~AppImpl() { registry_.deinit(); }
 
-    /// Calls enabled() and then init() on every component, in dependency order (a disabled
-    /// component is skipped from then on). If one throws, or a component needs a disabled
-    /// one (keel::Error), the components already initialized are deinitialized in reverse,
-    /// and the exception propagates. Callable once. Components with keel::AsyncInit run on
-    /// threads of their own (see there); init() returns or throws after they all finished.
+    /// Calls init() on every component, in dependency order; on a keel::Conditional, asks
+    /// enabled() first (a disabled component is skipped from then on). If one throws, or a
+    /// dependency on keel::Alternative<>s finds none or several enabled (keel::Error), the
+    /// components already initialized are deinitialized in reverse, and the exception
+    /// propagates. Callable once. Components with keel::AsyncInit run on threads of their
+    /// own (see there); init() returns or throws after they all finished.
     void init() { registry_.init(); }
     /// setAsync(false) runs every component on the calling thread, in init order, as if
     /// none listed keel::AsyncInit or keel::AsyncStart: to debug, to reproduce a run, or to
@@ -1782,9 +1942,11 @@ public:
     void deinit() noexcept { registry_.deinit(); }
 
     /// For the composition root: a component of this App, or an interface that exactly one
-    /// of them Provides<>. Usable at any time, also before init(); after init(), a disabled
-    /// one throws keel::Error. Two providers of T (also a component T plus a subclass that
-    /// inherits its keel::Provides<T>) is a compile error, as for a dependency.
+    /// of them Provides<>. Usable at any time, also before init(); after init(), a
+    /// keel::Conditional that is disabled throws keel::Error (the root may need it before
+    /// init() to configure it, so this isn't a compile error). Two providers of T (also a
+    /// component T plus a subclass that inherits its keel::Provides<T>) is a compile error,
+    /// as for a dependency.
     /// An interface whose providers are keel::Alternative<T> gets the one init() chose: it
     /// throws keel::Error before init(), and if none or several are enabled.
     template <class T>
@@ -1814,8 +1976,8 @@ public:
     /// deinit() and destruction run in reverse). Known at compile time, so it can be
     /// checked in a test without running anything:
     ///   static_assert(ServerApp::initOrder()[0] == "Config");
-    /// Disabled components are included (enabled() is asked at runtime); timings() shows
-    /// the calls that ran. With keel::AsyncInit and keel::AsyncStart, components with no
+    /// Disabled keel::Conditional components are included (enabled() is asked at runtime);
+    /// timings() shows the calls that ran. With keel::AsyncInit and keel::AsyncStart, components with no
     /// dependency path between them may run in another order, or at the same time; each
     /// still runs after the components it is ordered after. Names are keel::typeName<T>():
     /// the type names as the compiler spells them (`Logger`, `edge::Imu<edge::Front>`),
@@ -1826,10 +1988,11 @@ public:
 
     /// How long each lifecycle call took, in the order the calls finished (with
     /// keel::AsyncInit or keel::AsyncStart, calls on different threads overlap): one entry
-    /// per init(), start(), stop() and deinit() that ran on a component. A disabled component has none (its
-    /// enabled() isn't timed), nor does one whose init() never ran because a dependency
-    /// was disabled. A call that threw is recorded with `failed`, followed by the
-    /// rollback's stop() and deinit() calls. The view stays valid as long as the App, but
+    /// per init(), start(), stop() and deinit() that ran on a component. A disabled
+    /// component has none (its enabled() isn't timed), nor does one whose init() never ran
+    /// because a dependency on keel::Alternative<>s found none or several enabled. A call
+    /// that threw is recorded with `failed`, followed by the rollback's stop() and deinit()
+    /// calls. The view stays valid as long as the App, but
     /// holds the entries recorded when timings() was called; call it again later for more.
     /// The destructor's stop() and deinit() can't be seen: call deinit() first, then read
     /// the timings (with keel::run, read them inside fn, which runs before the shutdown).
@@ -1875,8 +2038,8 @@ protected:
     }
 
     // start, then fn(self), fn(), or a member function of one of the components
-    // (&Server::serve), whose target is resolved first: a disabled one throws before
-    // anything starts. A mistake gives exactly one error: one of the diagnostics above, or
+    // (&Server::serve), whose target is resolved first: an alternative that isn't chosen
+    // throws before anything starts. A mistake gives exactly one error: one of the diagnostics above, or
     // the compiler's own error inside a generic callable.
     template <class Self, class Fn>
     static decltype(auto) call([[maybe_unused]] Self& self, Registry& registry, Fn&& fn) {
@@ -1890,6 +2053,10 @@ protected:
                 return RunTargetMixed<typename Info::template Mixed<C>>{};
             } else if constexpr (targets > 1 && !Info::template chosenAtRuntime<C>) {
                 return RunTargetAmbiguous<C, typename Info::template Providers<C>>{};
+            } else if constexpr (!Info::template chosenAtRuntime<C> &&
+                                 isConditional<FirstOr<typename Info::template Providers<C>, void>>) {
+                // One provider, which may be turned off (alternatives are chosen at runtime).
+                return RunTargetConditional<C, FirstOr<typename Info::template Providers<C>, void>>{};
             } else if constexpr (!std::is_invocable_v<F, C&>) {
                 return RunTargetNotCallable<F>{};
             } else {
@@ -2043,9 +2210,10 @@ public:
     /// If init() or start() throws, the exception propagates after the rollback, and fn
     /// doesn't run. Calling run() after init() throws keel::Error. A reference returned by fn
     /// refers to an object that is already deinitialized when run() returns.
-    /// run(&C::f) resolves C after init() and before start(): a disabled C throws
-    /// keel::Error (after deinit(); nothing is started). On an interface whose providers are
-    /// keel::Alternative<>s, f is called on the enabled one.
+    /// run(&C::f) resolves C after init() and before start(). A C that is (or is provided by)
+    /// a keel::Conditional doesn't compile (RunTargetConditional). On an interface whose
+    /// providers are keel::Alternative<>s, f is called on the enabled one; if none is
+    /// enabled, it throws keel::Error (after deinit(); nothing is started).
     template <class Fn>
     decltype(auto) run(Fn&& fn) {
         return Base::runWith(*this, std::forward<Fn>(fn));
@@ -2173,22 +2341,12 @@ inline void* ComponentBase::useIfEnabled(const Binding& b, std::string_view depe
 
 // Runs before init(): the dependencies come earlier in the init order, so each is
 // initialized or disabled by now (with async components too: see Registry::Schedule).
+// The compile-time checks leave one way to fail: keel::Alternative<>s of which none (for a
+// required dependency) or several are enabled.
 inline void ComponentBase::checkDependencies() const {
     for (std::size_t i = 0; i < needCount_; ++i) {
         const Need& need = needs_[i];
-        if (need.use == Use::all) {
-            bool any = false;  // every enabled provider is still checked (use() throws if not initialized)
-            for (const Binding& b : lookupAll(need.id, need.name())) {
-                if (useIfEnabled(b, need.name()) != nullptr) any = true;
-            }
-            if (!any) {
-                throw Error(concat({"keel: ", name_, " uses keel::All<", need.name(), ">, and every provider of ",
-                                    need.name(), " is disabled (use keel::Optional<keel::All<", need.name(),
-                                    ">> if none is fine)"}));
-            }
-        } else {
-            lookup(need.id, need.name(), need.use == Use::required);  // Optional<T>: several enabled throw
-        }
+        lookup(need.id, need.name(), need.use == Use::required);
     }
 }
 
@@ -2466,9 +2624,9 @@ inline bool Registry::runsAsync(Phase phase, std::size_t i) const noexcept {
 inline void Registry::runOne(Phase phase, std::size_t i) {
     ComponentBase& c = *components_[i];
     if (phase == Phase::init) {
-        // Asked first: a component that opts out isn't checked, so a disabled feature may
-        // depend on another disabled one.
-        if (!c.enabled()) {
+        // Asked first: a component that is off isn't checked (a disabled alternative's
+        // keel::Optional<I> isn't reported if several I are enabled, say).
+        if (c.conditional_ != nullptr && !c.conditional_->enabled()) {
             c.state_ = ComponentBase::State::disabled;
             return;
         }

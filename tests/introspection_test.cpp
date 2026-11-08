@@ -20,11 +20,10 @@ struct Failure : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
-enum class Behavior { normal, failInit, failStart, disabled, slowInit };
+enum class Behavior { normal, failInit, failStart, slowInit };
 
 template <char Name, Behavior behavior = Behavior::normal, class... Deps>
 class Part : public keel::Component<Deps...> {
-    bool enabled() const override { return behavior != Behavior::disabled; }
     void init() override {
         if (behavior == Behavior::failInit) throw Failure("init");
         if (behavior == Behavior::slowInit) {
@@ -38,6 +37,12 @@ class Part : public keel::Component<Deps...> {
     void start() override {
         if (behavior == Behavior::failStart) throw Failure("start");
     }
+};
+
+// A component that configuration turned off.
+template <char Name, class... Deps>
+class OffPart : public keel::Component<Deps...>, public keel::Conditional {
+    bool enabled() const override { return false; }
 };
 
 using A = Part<'A'>;
@@ -83,7 +88,7 @@ TEST(init_order_names_the_components_in_init_order) {
 }
 
 TEST(init_order_includes_disabled_components) {
-    using Off = Part<'O', Behavior::disabled, A>;
+    using Off = intro::OffPart<'O', A>;
     auto app = keel::compose<Off, A>();
     app.init();
     CHECK(app.initOrder().size() == 2);
@@ -142,7 +147,7 @@ TEST(a_failed_start_is_recorded_before_the_rollback) {
 }
 
 TEST(a_disabled_component_has_no_timings) {
-    using Off = Part<'O', Behavior::disabled, A>;
+    using Off = intro::OffPart<'O', A>;
     auto app = keel::compose<Off, A>();
     app.run([] {});
     const std::string a(keel::typeName<A>());
@@ -177,8 +182,10 @@ struct Tracing;  // never composed
 
 class Config : public keel::Component<> {};
 class Disk : public keel::Component<Config, keel::Provides<Storage>>, public Storage {};
-class Memory : public keel::Component<keel::Alternative<Cache>>, public Cache {};
-class Redis : public keel::Component<keel::Alternative<Cache>>, public Cache {
+class Memory : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class Redis : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
     bool enabled() const override { return false; }
 };
 class Migrations : public keel::Component<> {};

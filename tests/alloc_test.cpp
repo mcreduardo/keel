@@ -61,11 +61,11 @@ public:
     virtual ~Cache() = default;
 };
 
-class RedisCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache {
+class RedisCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache, public keel::Conditional {
     bool enabled() const override { return getComponent<Config>().redis; }
 };
 
-class MemoryCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache {
+class MemoryCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache, public keel::Conditional {
     bool enabled() const override { return !getComponent<Config>().redis; }
 };
 

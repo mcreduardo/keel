@@ -109,7 +109,8 @@ app.getComponent<Storage>();     // the one component that lists keel::Provides<
 ```
 
 - It works **before `init()`** too, so the root can configure a component before startup.
-  After `init()`, a component that is [disabled](runtime-decisions.md) throws `keel::Error`.
+  After `init()`, a [`keel::Conditional`](runtime-decisions.md#keelconditional-a-component-that-may-be-off)
+  component that is disabled throws `keel::Error`.
 - An interface whose providers are `keel::Alternative<I>`s is chosen by `init()`, so asking
   for it before `init()` throws `keel::Error`. After `init()` you get the enabled one.
 - A type the `App` doesn't have is a compile error (`NotInApp<T>`), and so is an interface

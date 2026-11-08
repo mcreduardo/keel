@@ -26,7 +26,7 @@ class FeedHandler : public keel::Component<Config, keel::AsyncStart> {
 
 | Marker | Effect |
 |---|---|
-| `keel::AsyncInit` | `enabled()` and `init()` run on a thread of their own |
+| `keel::AsyncInit` | `init()` (and `enabled()`, for a `keel::Conditional`) run on a thread of their own |
 | `keel::AsyncStart` | `start()` runs on a thread of its own |
 
 List a marker once, on its own: not inside `Optional<...>` or another marker
@@ -89,7 +89,7 @@ same time, *synchronous ones included*. So:
 
 ## Failures
 
-If an `init()` (or `enabled()`, or `start()`) throws:
+If an `init()` (or a `keel::Conditional`'s `enabled()`, or `start()`) throws:
 
 - nothing new starts, and the calls already running finish;
 - everything initialized (or started) is rolled back in reverse order, on the calling

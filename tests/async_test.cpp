@@ -334,11 +334,11 @@ struct Cache {
 };
 bool redisWanted = false;
 
-class Redis : public Logged<keel::Alternative<Cache>, keel::AsyncInit>, public Cache {
+class Redis : public Logged<keel::Alternative<Cache>, keel::AsyncInit>, public Cache, public keel::Conditional {
     bool enabled() const override { return redisWanted; }
     std::string_view kind() const override { return "redis"; }
 };
-class Memory : public Logged<keel::Alternative<Cache>, keel::AsyncInit>, public Cache {
+class Memory : public Logged<keel::Alternative<Cache>, keel::AsyncInit>, public Cache, public keel::Conditional {
     bool enabled() const override { return !redisWanted; }
     std::string_view kind() const override { return "memory"; }
 };
@@ -366,21 +366,16 @@ private:
     }
 };
 class Late : public Logged<keel::InitAfter<Menu>, keel::AsyncInit> {};
-class Draft : public Logged<keel::Provides<Plugin>, keel::AsyncInit>, public Plugin {
+class Draft : public Logged<keel::Provides<Plugin>, keel::AsyncInit>, public Plugin, public keel::Conditional {
     bool enabled() const override { return false; }
 };
 
-class Off : public Logged<keel::AsyncInit> {
-    bool enabled() const override { return false; }
-};
-class NeedsOff : public Logged<Off> {};
-
-class Thrower : public Logged<keel::AsyncInit> {
+class Thrower : public Logged<keel::AsyncInit>, public keel::Conditional {
     bool enabled() const override { throw Failure("enabled"); }
 };
 class Fine : public Logged<> {};
 
-class Probe : public Logged<keel::AsyncInit> {
+class Probe : public Logged<keel::AsyncInit>, public keel::Conditional {
 public:
     bool on = true;
 
@@ -437,20 +432,6 @@ TEST(all_leaves_out_a_disabled_async_provider) {
         app.init();
         CHECK(app.getComponent<edges::Menu>().plugins == 2);
         CHECK(!journal.has("init Draft"));
-    });
-}
-
-TEST(a_disabled_async_component_fails_its_required_dependent) {
-    inRounds([] {
-        auto app = keel::compose<edges::NeedsOff, edges::Off>();
-        std::string error;
-        try {
-            app.init();
-        } catch (const keel::Error& e) {
-            error = e.what();
-        }
-        CHECK(error.find("is disabled") != std::string::npos);
-        CHECK(!journal.has("init NeedsOff"));
     });
 }
 
@@ -663,7 +644,7 @@ class Starter : public Logged<Config, keel::AsyncStart> {
 
 class Child : public Logged<Broken, keel::AsyncStart> {};
 
-class Off : public Logged<keel::AsyncStart> {
+class Off : public Logged<keel::AsyncStart>, public keel::Conditional {
     bool enabled() const override { return false; }
 };
 class Spinner : public Logged<keel::AsyncStart> {};

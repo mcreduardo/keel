@@ -65,31 +65,80 @@
 
 - **`App::getComponent<T>()`: compile time for one provider, runtime for alternatives.** A
   component, or an interface with one `Provides<>` provider, is resolved at compile time and
-  usable before `init()` (to configure it); after `init()`, a disabled one throws
-  `keel::Error`. An interface whose providers are `Alternative<I>` (one or several) is
-  resolved at runtime: before `init()` it throws (the choice isn't made yet), after it the
-  enabled one, and it throws if none or several are enabled, or if a failed `init()` never
-  chose. `run(&C::f)` resolves its target after `init()` and before `start()`, so a disabled
-  or unchosen target throws before anything starts. Alternatives: return a disabled component anyway (as `framework/` does;
-  using it would touch an uninitialized component); or make every root lookup valid only
-  after `init()` (one rule, but configuring a component before `init()` would no longer be
-  possible).
+  usable before `init()` (to configure it); after `init()`, a disabled one (a
+  `keel::Conditional`) throws `keel::Error`. Unlike a component's dependencies, the root may
+  ask for a conditional T with `getComponent<T>()`: configuring it before `init()` needs a
+  reference whether or not it will be enabled. Alternatives: a compile error pointing to a
+  new `App::findComponent<T>()` that returns nullptr when disabled (one more API; the
+  before-`init()` case would need getComponent anyway); or never throw and let the root use
+  a disabled component (which may touch uninitialized state). An interface whose
+  providers are `Alternative<I>` (one or several) is resolved at runtime: before `init()`
+  it throws (the choice isn't made yet), after it the enabled one, and it throws if none or
+  several are enabled, or if a failed `init()` never chose. `run(&C::f)` resolves its
+  target after `init()` and before `start()`, so an unchosen alternative throws before
+  anything starts; a target that is a single conditional component doesn't compile
+  (`RunTargetConditional`), since `run` has no use for it before `init()`. Alternatives:
+  return a disabled component anyway (as `framework/` does; using it would touch an
+  uninitialized component); or make every root lookup valid only after `init()` (one rule,
+  but configuring a component before `init()` would no longer be possible).
+
+- **Root `getComponent<T>()` after a failed `init()`** returns a component that was never
+  initialized (or was already deinitialized by the rollback) without throwing
+  (pre-existing; only alternatives are checked). Root access could check the registry
+  state and the component's own state and throw instead.
 
 - **`enabled()` is asked in init order, in place of `init()`.** So it can use its
-  dependencies (typically `Config`), and a disabled component's own dependencies are never
-  checked (a disabled feature may need a disabled one). Alternative: ask every component
-  before any `init()`; then `enabled()` couldn't use dependencies, which is the main use.
+  dependencies (typically `Config`). A disabled component's own dependencies are never
+  checked (that matters only for its `Optional<I>` on several enabled alternatives).
+  Alternative: ask every component before any `init()`; then `enabled()` couldn't use
+  dependencies, which is the main use.
+
+- **`keel::Conditional` is an opt-in base class; nothing may require a conditional
+  component.** Only components that derive from it are asked `enabled()` (a pure virtual
+  `bool enabled() const`). A required dependency on a conditional T (`RequiredConditional`),
+  a required I whose one provider is a conditional `Provides<I>`
+  (`RequiredConditionalProvider`), and an `All<I>` whose providers are all conditional
+  (`OnlyConditionalProviders`) are compile errors; every `Alternative<I>` must be
+  conditional (`AlternativeNotConditional`); a private or repeated base is
+  `InaccessibleConditional`; a non-const `enabled()` leaves the class abstract
+  (`AbstractComponent`, whose message mentions the signature). So the only runtime
+  composition failures left are those of `Alternative<I>` (none or several enabled).
+  Revisitable:
+  - **A conditional component may not require another conditional one** (use
+    `Optional<T>`), although both could be off together. Stricter than before (a disabled
+    component's dependencies weren't checked), accepted: keel can't know that two
+    `enabled()`s agree. Alternative: allow it and check at runtime that a required
+    conditional dependency is enabled when its dependent is (the old runtime failure, in
+    fewer places).
+  - **A base class, not a `Component<...>` list entry.** `Provides<I>`, `AsyncInit` and
+    `Alternative<I>` are list entries; `Conditional` is a base so that its pure virtual
+    forces the right signature (a wrong one is an abstract-class error, not a silent
+    non-override). Alternative: a `keel::Conditional` tag in the list plus a check that
+    `enabled()` exists with the right signature (consistent style, but the check is
+    hand-written and the hook would have to live in every component again).
+  - **`All<I>` needs one provider that isn't conditional**, so it is never empty. An
+    `All<I>` over alternatives only is an error too; `Optional<All<I>>` is the way.
+    Alternative: allow it and throw at runtime when every provider is off (the old rule).
+  - **`Alternative<I>` needs `Conditional`** rather than implying it, so `enabled()` stays
+    a normal override with the compiler's checks.
+  - **Root access to a conditional component** stays a runtime check (see
+    `App::getComponent<T>()` above).
 
 - **Alternatives are checked where they are needed.** When a component that requires I
   initializes, exactly one alternative of I must be enabled; for `Optional<I>`, at most one
-  (none gives nullptr); `All<I>` takes the enabled ones (at least one for `All<I>`). Two
+  (none gives nullptr); `Optional<All<I>>` takes the enabled ones (`All<I>` over
+  alternatives only doesn't compile: `OnlyConditionalProviders`). Two
   enabled alternatives of an I that nothing depends on as one I are not an error.
   Alternative: check every group of alternatives in `init()`, used or not. Not done: the
   dependents are what need one, and `framework/` behaves the same.
 
-- **A single `Alternative<I>` is allowed.** It is a provider that configuration may turn
-  off; a required dependent then fails `init()` ("none of its alternatives (...) is
-  enabled").
+- **A single `Alternative<I>` is allowed, and may be required.** It is a provider that
+  configuration may turn off, for dependents that require it (a test composition may
+  compose just one alternative); a required dependent then fails `init()` ("none of
+  its alternatives (...) is enabled"). (A conditional `Provides<I>` can't be required at
+  all: `RequiredConditionalProvider`, whose message points to `Alternative<I>` for this.
+  Nor can a concrete alternative: `Component<RedisCache>` is `RequiredConditional`; only
+  `Alternative<Self>`, required as `Self`, goes through the runtime check.)
   Alternative: require two or more alternatives at compile time. Not done: a stub can be
   added later without touching the first one.
 
@@ -163,13 +212,6 @@
   `topologicalOrder`), above MSVC's default of about 100k. The tests set the flag; documented
   in docs/composition.md and docs/reference.md. Alternative: a cheaper sort.
 
-- **`enabled()` may collide with a user's own member.** A component that already has a
-  `bool enabled() const` (an accessor, say) now overrides the hook with it, silently; and a
-  wrong signature (`bool enabled()` without const) silently hides the hook instead. The doc
-  recommends `override`. Options: rename the hook to something unlikely to collide
-  (`keelEnabled()`, `isEnabledAtRuntime()`); or detect a non-overriding `enabled` at compile
-  time. The name is kept for now because `framework/` and the posts use it. erocha decides.
-
 - **A component in two bundles is a duplicate.** Bundles are expanded in place into one
   list, and a component listed twice is `DuplicateComponent<T>` (its message mentions
   bundles), as in a plain `compose<...>` list. A bundle reached twice (listed twice, or also
@@ -215,7 +257,7 @@
 - **`App::initOrder()` is a compile-time constant.** A `static constexpr` function returning
   `std::array<std::string_view, N>`: the type names in init order, usable in a
   `static_assert` and without constructing the App. It includes disabled components
-  (`enabled()` is asked at runtime); `timings()` shows what ran. Alternative (as in
+  (a `keel::Conditional`'s `enabled()` is asked at runtime); `timings()` shows what ran. Alternative (as in
   `framework/`): a runtime `std::vector` of what was actually initialized. With async
   components it stays the dependency order; the order calls finish in is in `timings()`.
 

@@ -27,7 +27,17 @@ First release: a single C++20 header, standard library only, no RTTI.
 - Interfaces: `keel::Provides<I>`, with ambiguity reported at compile time and access to
   interfaces from the app.
 - Collections: `keel::All<I>` and `keel::Optional<keel::All<I>>`, with `getAll<I>()`.
-- Decisions at runtime: `enabled()` and `keel::Alternative<I>`.
+- Decisions at runtime: `keel::Conditional`, an opt-in base class whose `enabled()` lets
+  configuration turn a component off, and `keel::Alternative<I>` (each one a
+  `keel::Conditional`) to choose one of several implementations. Nothing may require a
+  conditional component except through `Alternative<I>`: `RequiredConditional`,
+  `RequiredConditionalProvider`, `OnlyConditionalProviders` and `RunTargetConditional` are
+  compile errors. So the only composition failures left to runtime are an
+  `Alternative<I>` with none or several enabled.
+  Code written against earlier development snapshots, where every component had a virtual
+  `enabled()`: derive the components that override it from `keel::Conditional`. An old
+  `bool enabled() const` without `override` and without `keel::Conditional` now compiles
+  and is never asked; writing `override` catches it.
 - Groups of components: `keel::Bundle<...>`; composition guards `keel::isValid` and
   `keel::requireValid`.
 - Introspection: `initOrder()`, `timings()` and `toDot()` (Graphviz).

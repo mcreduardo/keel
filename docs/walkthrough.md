@@ -60,12 +60,13 @@ private:
 
 ## An optional component
 
-`Metrics` may be turned off by configuration (`enabled()`), and `Database` works without
-it (`keel::Optional`). See [Decisions at runtime](runtime-decisions.md) and
+`Metrics` may be turned off by configuration (`keel::Conditional`), and `Database` works
+without it (`keel::Optional`; a plain `Metrics` in its list wouldn't compile). See
+[Decisions at runtime](runtime-decisions.md) and
 [Dependencies](dependencies.md#optional-keeloptionalt).
 
 ```cpp
-class Metrics : public keel::Component<Config> {
+class Metrics : public keel::Component<Config>, public keel::Conditional {
 public:
     void count() { ++count_; }
     int total() const { return count_; }
@@ -103,7 +104,11 @@ class Migrations : public keel::Component<Database> {
 ## An implementation chosen at runtime
 
 Two implementations of `Storage`, both composed; configuration enables one
-(`keel::Alternative`). Dependents just use `Storage`.
+(`keel::Alternative` and `keel::Conditional`). They are components of their own because
+they need different dependencies: only `DatabaseStorage` uses the `Database`. (When the
+implementations need the same ones, one component that creates the configured
+implementation is simpler: see [Decisions at runtime](runtime-decisions.md).)
+Dependents just use `Storage`.
 
 ```cpp
 struct Storage {
@@ -111,7 +116,8 @@ struct Storage {
     virtual void put(const std::string& key, const std::string& value) = 0;
 };
 
-class MemoryStorage : public keel::Component<Config, keel::Alternative<Storage>>, public Storage {
+class MemoryStorage : public keel::Component<Config, keel::Alternative<Storage>>, public Storage,
+                      public keel::Conditional {
 public:
     void put(const std::string& key, const std::string& value) override { data_[key] = value; }
 
@@ -120,7 +126,8 @@ private:
     std::map<std::string, std::string> data_;
 };
 
-class DatabaseStorage : public keel::Component<Config, Database, keel::Alternative<Storage>>, public Storage {
+class DatabaseStorage : public keel::Component<Config, Database, keel::Alternative<Storage>>, public Storage,
+                        public keel::Conditional {
 public:
     void put(const std::string& key, const std::string& value) override { database_->query("put " + key + "=" + value); }
 

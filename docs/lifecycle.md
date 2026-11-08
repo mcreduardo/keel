@@ -38,8 +38,9 @@ stopped. Most components only need `init()`, and maybe `deinit()`.
 report a failure to. An override without `noexcept` doesn't compile, and an exception that
 escapes one ends the program (`std::terminate`). Handle or log cleanup failures inside.
 
-A component can also opt out at runtime by overriding `enabled()`; a disabled component
-runs none of these hooks. See [Decisions at runtime](runtime-decisions.md).
+A component that derives from `keel::Conditional` can be turned off at runtime by its
+`enabled()`; a disabled component runs none of these hooks. See
+[Decisions at runtime](runtime-decisions.md).
 
 ## Guarantees
 
@@ -64,7 +65,7 @@ These guarantees also hold when components run on threads of their own: see
 | From | `getComponent`, `findComponent`, `getAll` |
 |---|---|
 | the constructor | throw `keel::Error` (not part of an application yet) |
-| `enabled()` | work, but keel hasn't checked the dependencies yet: `getAll<I>()` may be empty, and a disabled required dependency throws `keel::Error` |
+| `enabled()` (a `keel::Conditional`) | work; for a dependency on `keel::Alternative<>`s, keel hasn't checked the choice yet (none or several enabled throws `keel::Error`) |
 | `init()`, `start()`, `stop()`, `deinit()` | work |
 | after your own `deinit()` | throw `keel::Error` |
 

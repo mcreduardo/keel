@@ -54,7 +54,9 @@ Fix: list it once. For overlapping groups, make the shared part its own bundle.
 **`AbstractComponent<T>`** (3). `T` has a pure virtual function, so it can't be created.
 
 Fix: compose the concrete subclass. If others depend on `T`, let `T` provide itself
-(`keel::Component<keel::Provides<T>>`) so the subclass is found as `T`.
+(`keel::Component<keel::Provides<T>>`) so the subclass is found as `T`. For a
+`keel::Conditional`, check the signature of `enabled()` (40): it must be
+`bool enabled() const`.
 
 **`EmptyComposition<>`** (4). `compose<>()`, or only empty bundles. Fix: list a component.
 
@@ -153,14 +155,16 @@ keel::compose<Service, DiskStorage, MemoryStorage>();
 Fix, depending on what you mean: compose only one; depend on the one you want by its
 own type (or a [role interface](patterns.md#picking-one-of-several-providers-role-interfaces));
 use every provider with `keel::All<I>`; or let configuration choose: make each one a
-`keel::Alternative<I>` and enable one at runtime.
+`keel::Alternative<I>` and a `keel::Conditional`, and enable one at runtime (or create the
+configured one in a single component: see
+[Decisions at runtime](runtime-decisions.md#choose-an-implementation)).
 
 **`MixedProviders<I, TypeList<Provides...>, TypeList<Alternatives...>>`** (14). Something
 needs one `I`, and some of its providers are `Provides<I>` while others are
 `Alternative<I>`. Reported once per `I`, however many places need it.
 
-Fix: make every provider an `Alternative<I>` (a do-nothing default is an alternative too),
-or compose only one.
+Fix: make every provider an `Alternative<I>` and a `keel::Conditional` (a do-nothing
+default is an alternative too), or compose only one.
 
 **`UndeclaredProvider<C, T, Derived>`** (15). `C` depends on `T` (required, `Optional` or
 `InitAfter`), nothing composed is or provides `T`, and `Derived` derives from `T` without
@@ -237,7 +241,8 @@ Fix: compose it. A component that derives from `T` must list `keel::Provides<T>`
 **`AmbiguousInterface<I, TypeList<Providers...>>`** (28). `app.getComponent<I>()`, and
 several components provide `I`.
 
-Fix: get a specific one by its own type, or make each of them a `keel::Alternative<I>`.
+Fix: get a specific one by its own type, or make each of them a `keel::Alternative<I>` and
+a `keel::Conditional`.
 If some providers are `Provides<I>` and others `Alternative<I>`, the error is
 `MixedProviders` instead (14), for the root and for `run(&I::f)` alike.
 
@@ -251,7 +256,8 @@ or call it from a lambda.
 **`RunTargetAmbiguous<I, TypeList<Providers...>>`** (30). `run(&I::f)`, and several
 components provide `I`.
 
-Fix: call it from a lambda on the one you want, or make each a `keel::Alternative<I>`.
+Fix: call it from a lambda on the one you want, or make each a `keel::Alternative<I>` and a
+`keel::Conditional`.
 
 **`RunTargetNotCallable<F>`** (31). `run(&C::f)`, and `f` can't be called on a `C&` with no
 arguments (it takes parameters, or is `&&`-qualified).
@@ -269,6 +275,76 @@ mistake's own named assertion (`static assertion failed due to requirement
 'dependencyComposed<Server, Logger>'`, in `MissingDependency<Server, Logger>`), not on the
 guard's `static_assert`.
 
+### Conditional components
+
+A [`keel::Conditional`](runtime-decisions.md#keelconditional-a-component-that-may-be-off)
+component may be turned off by configuration, so nothing may require it, except through
+`keel::Alternative<I>`, whose choice is checked at startup.
+
+**`RequiredConditional<C, T>`** (35). `C` lists `T` as a required dependency, and `T` is a
+`keel::Conditional`. Also when `C` is conditional itself: each may be off on its own.
+
+```cpp
+class Uplink : public keel::Component<Config>, public keel::Conditional { ... };
+class Dashboard : public keel::Component<Uplink> {};  // RequiredConditional<Dashboard, Uplink>
+```
+
+Fix: list `keel::Optional<T>` and use `findComponent<T>()`, which returns `nullptr` while
+`T` is disabled (or `keel::InitAfter<T>` for ordering only). Or, if `T` is always needed,
+don't make it conditional.
+
+**`RequiredConditionalProvider<C, I, Provider>`** (36). `C` requires the interface `I`, and
+its one provider, `Provider`, is a `keel::Conditional` (with `keel::Provides<I>`).
+
+Fix: list `keel::Optional<I>`; or compose a provider that is always there, e.g. a
+component that creates the configured implementation, possibly a do-nothing one (see
+[Decisions at runtime](runtime-decisions.md#turning-a-feature-off-which-tool-to-use)); or
+make every implementation a `keel::Alternative<I>` (each a `keel::Conditional` already),
+whose choice is checked at startup.
+
+**`OnlyConditionalProviders<C, I, TypeList<Providers...>>`** (37). `C` lists
+`keel::All<I>`, which is never empty, and every provider of `I` is a `keel::Conditional`
+(alternatives included), so they could all be off.
+
+Fix: depend on `keel::Optional<keel::All<I>>` if none is fine, or compose a provider that
+isn't conditional.
+
+**`AlternativeNotConditional<C, I>`** (38). `C` lists `keel::Alternative<I>` but doesn't
+derive from `keel::Conditional`, so configuration can't turn it off. A member called
+`enabled()` doesn't count: keel only asks a `keel::Conditional`. Reported once per
+component, at its first alternative.
+
+Fix: derive publicly from `keel::Conditional` and override `bool enabled() const`; or list
+`keel::Provides<I>` if it is always the one.
+
+**`InaccessibleConditional<T>`** (39). `T` derives from `keel::Conditional` privately (the
+default for a `class`), protectedly, or more than once, so keel can't ask its `enabled()`.
+
+```cpp
+class Uplink : public keel::Component<>, keel::Conditional { ... };  // InaccessibleConditional<Uplink>
+```
+
+Fix: `public keel::Conditional`, once.
+
+**`enabled()` with the wrong signature** (40). `bool enabled()` without `const` doesn't
+override `keel::Conditional`'s, so the component stays abstract: `AbstractComponent<T>` (3),
+whose message reminds you of `bool enabled() const`. With `override`, the compiler reports
+its own error first ("marked 'override' but does not override"), followed by
+`AbstractComponent<T>`.
+
+**`RunTargetConditional<C, Provider>`** (41). `run(&C::f)`, and the one component that is
+or provides `C` is a `keel::Conditional`, so there may be nothing to call `f` on.
+(`run(&I::f)` on `keel::Alternative<I>` providers is allowed: the choice is checked at
+startup.)
+
+```cpp
+class Uplink : public keel::Component<>, public keel::Conditional { public: int send(); ... };
+app.run(&Uplink::send);  // RunTargetConditional<Uplink, Uplink>
+```
+
+Fix: call it from a lambda that decides what to do when it is off, or run a member function
+of a component that is always there.
+
 ## At runtime: `keel::Error`
 
 `keel::Error` derives from `std::logic_error`. Every message starts with `keel:`. It is
@@ -279,11 +355,10 @@ thrown for:
 | a lookup from a constructor | `keel: getComponent<Logger>() called before the component was part of an application (from its constructor?) ...` |
 | a lookup before `App::init()`, or after the caller's own `deinit()` | `keel: Server used Logger before init()` / `... after its deinit()` |
 | a lookup from a disabled component | `keel: Uplink used Config, but Uplink is disabled (its enabled() returned false)` |
-| a required dependency that is disabled | `keel: Dashboard uses Uplink: Uplink is disabled (its enabled() returned false)` |
-| ... through an interface | `keel: Service uses Storage: its provider DiskStorage is disabled ...` |
+| the root asks for a disabled component after `init()` (also `run(&Uplink::f)`) | `keel: getComponent<Uplink>(): Uplink is disabled (its enabled() returned false)` |
+| ... through an interface | `keel: getComponent<Storage>(): its provider DiskStorage is disabled ...` |
 | no enabled alternative | `keel: Repository uses Cache: none of its alternatives (RedisCache, MemoryCache) is enabled` |
 | several enabled alternatives | `keel: Repository uses Cache: several of its alternatives are enabled (only one may be): RedisCache, MemoryCache` |
-| an `All<I>` whose providers are all disabled | `keel: HealthEndpoint uses keel::All<HealthCheck>, and every provider of HealthCheck is disabled ...` |
 | a lookup of a dependency that isn't initialized (yet, or any more) | `keel: Server used Logger before it was initialized` / `... after it was deinitialized` |
 | the root asks for an alternative after an `init()` that failed before choosing | `keel: getComponent<Cache>(): init() failed before choosing among its alternatives (RedisCache, MemoryCache)` |
 | the root asks for an alternative before `init()` | `keel: getComponent<Cache>(): init() chooses among its alternatives (RedisCache, MemoryCache); call it after init()` |
@@ -291,7 +366,8 @@ thrown for:
 | `start()` before `init()`, twice, after `stop()`, after a failed startup, after `deinit()` | `keel: start() called before init()`, ... |
 | `setAsync()` after `init()` | `keel: setAsync() must be called before init()` |
 
-Dependency problems found by `init()` are thrown before the dependent's `init()` runs, with
+The alternatives' failures (none or several enabled) are the only dependency problems
+left to `init()`. They are thrown before the dependent's `init()` runs, with
 the usual [rollback](lifecycle.md#failures-during-startup). A thread for an async component
 that can't be created fails startup with `std::system_error`, not `keel::Error`. Exceptions thrown by your own
 components propagate unchanged, after the rollback.

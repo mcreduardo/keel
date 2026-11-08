@@ -6,7 +6,9 @@ struct Cache {
     virtual ~Cache() = default;
 };
 
-class RedisCache : public keel::Component<keel::Alternative<Cache>>, public Cache {};
+class RedisCache : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
 class MemoryCache : public keel::Component<keel::Provides<Cache>>, public Cache {};
 
 class Service : public keel::Component<Cache> {};

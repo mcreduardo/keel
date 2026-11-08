@@ -7,8 +7,12 @@ struct Cache {
 };
 
 class Repository : public keel::Component<Cache> {};
-class RedisCache : public keel::Component<keel::Alternative<Cache>>, public Cache {};
-class MemoryCache : public keel::Component<Repository, keel::Alternative<Cache>>, public Cache {};
+class RedisCache : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class MemoryCache : public keel::Component<Repository, keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
 
 static_assert(!keel::isValid<Repository, RedisCache, MemoryCache>, "isValid disagrees with compose");
 

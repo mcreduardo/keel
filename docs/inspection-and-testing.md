@@ -58,9 +58,9 @@ static_assert(ServerApp::initOrder()[0] == "Config");
 static_assert(ServerApp::initOrder().back() == keel::typeName<HttpServer>());
 ```
 
-It includes disabled components (`enabled()` is asked at runtime); `timings()` shows what
-actually ran. Construction follows the same order; `stop()`, `deinit()` and destruction
-run in reverse.
+It includes components that configuration may turn off (a `keel::Conditional`'s
+`enabled()` is asked at runtime); `timings()` shows what actually ran. Construction
+follows the same order; `stop()`, `deinit()` and destruction run in reverse.
 
 **Names** are `keel::typeName<T>()`: the type as the compiler spells it (`Logger`,
 `edge::Imu<edge::Front>`). The spelling differs between compilers, for anonymous
@@ -96,7 +96,7 @@ deinit Database       15.0 ms
   and `deinit()` call that ran, measured with `std::chrono::steady_clock`, in the order the
   calls finished.
 - A call that threw has `failed` set, followed by the rollback's calls.
-- `enabled()` isn't timed, and a disabled component has no entries.
+- A `keel::Conditional`'s `enabled()` isn't timed, and a disabled component has no entries.
 - Recording is always on and never allocates after `init()` (which reserves room for
   every call).
 - The span holds the entries recorded when you called `timings()`; call it again later for

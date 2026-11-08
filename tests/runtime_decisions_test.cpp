@@ -56,8 +56,8 @@ private:
     void init() override { events.push_back("init Config"); }
 };
 
-// A component that logs every hook, and is enabled or not from the configuration.
-class Telemetry : public keel::Component<Config> {
+// A component that logs every hook, and that configuration turns on or off.
+class Telemetry : public keel::Component<Config>, public keel::Conditional {
 public:
     Telemetry() { events.push_back("+Telemetry"); }
     ~Telemetry() override { events.push_back("-Telemetry"); }
@@ -90,18 +90,31 @@ private:
     Telemetry* telemetry_ = nullptr;
 };
 
-class Exporter : public keel::Component<Telemetry> {
-    void init() override { events.push_back("init Exporter"); }
+// Nothing may require a conditional component, a conditional one included.
+class Exporter : public keel::Component<Telemetry> {};
+class Mirror : public keel::Component<Telemetry>, public keel::Conditional {
+    bool enabled() const override { return true; }
 };
 
-// A disabled component may depend on a disabled one: it isn't checked.
-class Uplink : public keel::Component<Telemetry> {
-    bool enabled() const override { return false; }
-    void init() override { events.push_back("init Uplink"); }
+// A conditional component may use another one through keel::Optional<>.
+class Uplink : public keel::Component<keel::Optional<Telemetry>>, public keel::Conditional {
+public:
+    Telemetry* telemetry() const { return telemetry_; }
+
+private:
+    bool enabled() const override {
+        events.push_back("enabled Uplink");
+        return true;
+    }
+    void init() override {
+        telemetry_ = findComponent<Telemetry>();
+        events.push_back("init Uplink");
+    }
+    Telemetry* telemetry_ = nullptr;
 };
 
 // enabled() may throw, like init(): the components already initialized are rolled back.
-class Broken : public keel::Component<Config> {
+class Broken : public keel::Component<Config>, public keel::Conditional {
     bool enabled() const override { throw keel::Error("no configuration for Broken"); }
     void deinit() noexcept override { events.push_back("deinit Broken"); }
 };
@@ -110,18 +123,40 @@ class Logger : public keel::Component<> {
     void deinit() noexcept override { events.push_back("deinit Logger"); }
 };
 
-// An interface with one provider, which is disabled.
+// Not a keel::Conditional: its enabled() is its own, and keel never asks it.
+class Lamp : public keel::Component<> {
+public:
+    bool enabled() const { return false; }
+
+private:
+    void init() override { events.push_back("init Lamp"); }
+    void start() override { events.push_back("start Lamp"); }
+    void stop() noexcept override { events.push_back("stop Lamp"); }
+    void deinit() noexcept override { events.push_back("deinit Lamp"); }
+};
+class Room : public keel::Component<Lamp> {};  // may require it
+
+// An interface whose one provider is conditional.
 struct Sink {
     virtual ~Sink() = default;
 };
-class FileSink : public keel::Component<keel::Provides<Sink>>, public Sink {
+class FileSink : public keel::Component<keel::Provides<Sink>>, public Sink, public keel::Conditional {
     bool enabled() const override { return false; }
 };
 class Writer : public keel::Component<Sink> {};
+class MaybeWriter : public keel::Component<keel::Optional<Sink>> {};
 
 }  // namespace decisions
 
 using namespace decisions;
+
+// Required dependencies on conditional components don't compile (see the compile_fail
+// tests for the errors).
+static_assert(!keel::isValid<Exporter, Telemetry, Config>);
+static_assert(!keel::isValid<Mirror, Telemetry, Config>);
+static_assert(!keel::isValid<Writer, FileSink>);
+static_assert(keel::isValid<MaybeWriter, FileSink>);
+static_assert(keel::isValid<Room, Lamp>);
 
 TEST(a_disabled_component_runs_no_hooks_and_is_nullptr_for_dependents) {
     events.clear();
@@ -154,34 +189,25 @@ TEST(an_enabled_component_is_asked_once_before_its_init) {
                                               "deinit Server", "deinit Telemetry", "-Telemetry"}));
 }
 
-TEST(a_required_dependency_on_a_disabled_component_fails_init) {
-    events.clear();
-    settings = {};
-    auto app = keel::compose<Exporter, Telemetry, Config>();
-    CHECK(initError(app) ==
-          "keel: decisions::Exporter uses decisions::Telemetry: decisions::Telemetry is disabled (its enabled() "
-          "returned false)");
-    // Exporter's init() didn't run; Config was rolled back (it has no deinit hook to log).
-    CHECK((events == std::vector<std::string>{"+Telemetry", "init Config", "enabled Telemetry"}));
-    CHECK_THROWS(app.start());
-}
-
-TEST(a_required_interface_whose_provider_is_disabled_names_the_provider) {
-    auto app = keel::compose<Writer, FileSink>();
-    CHECK(initError(app) ==
-          "keel: decisions::Writer uses decisions::Sink: its provider decisions::FileSink is disabled (its "
-          "enabled() returned false)");
-    CHECK(errorOf([&] { app.getComponent<Sink>(); }) ==
-          "keel: getComponent<decisions::Sink>(): its provider decisions::FileSink is disabled (its enabled() "
-          "returned false)");
-}
-
-TEST(a_disabled_component_may_depend_on_a_disabled_one) {
+TEST(a_conditional_component_uses_another_through_optional) {
     events.clear();
     settings = {};
     auto app = keel::compose<Uplink, Telemetry, Config>();
     app.init();
-    CHECK((events == std::vector<std::string>{"+Telemetry", "init Config", "enabled Telemetry"}));
+    CHECK(app.getComponent<Uplink>().telemetry() == nullptr);
+    CHECK((events == std::vector<std::string>{"+Telemetry", "init Config", "enabled Telemetry", "enabled Uplink",
+                                              "init Uplink"}));
+}
+
+TEST(a_component_that_isnt_conditional_runs_every_hook_whatever_its_enabled_says) {
+    events.clear();
+    {
+        auto app = keel::compose<Room, Lamp>();
+        app.init();
+        app.start();
+        CHECK(!app.getComponent<Lamp>().enabled());
+    }
+    CHECK((events == std::vector<std::string>{"init Lamp", "start Lamp", "stop Lamp", "deinit Lamp"}));
 }
 
 TEST(the_root_gets_a_disabled_component_only_before_init) {
@@ -198,16 +224,12 @@ TEST(the_root_gets_a_disabled_component_only_before_init) {
           "returned false)");
 }
 
-TEST(run_on_a_disabled_component_throws_before_start) {
-    events.clear();
-    settings = {};
-    using TelemetryApp = keel::App<Server, Telemetry, Config>;
-    TelemetryApp app;
-    CHECK(contains(errorOf([&] { app.run(&Telemetry::config); }),
-                   "getComponent<decisions::Telemetry>(): decisions::Telemetry is disabled"));
-    // Nothing was started; what was initialized is deinitialized.
-    CHECK((events == std::vector<std::string>{"+Telemetry", "init Config", "enabled Telemetry", "init Server",
-                                              "deinit Server"}));
+TEST(the_root_names_the_disabled_provider_of_an_interface) {
+    auto app = keel::compose<MaybeWriter, FileSink>();
+    app.init();
+    CHECK(errorOf([&] { app.getComponent<Sink>(); }) ==
+          "keel: getComponent<decisions::Sink>(): its provider decisions::FileSink is disabled (its enabled() "
+          "returned false)");
 }
 
 TEST(a_throwing_enabled_rolls_back_like_init) {
@@ -228,12 +250,17 @@ struct HealthCheck {
 };
 
 template <bool on, int id = 0>
-class Check : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck {
+class Check : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck, public keel::Conditional {
 public:
     std::string name() const override { return on ? "on" : "off"; }
 
 private:
     bool enabled() const override { return on; }
+};
+
+class Always : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck {
+public:
+    std::string name() const override { return "always"; }
 };
 
 class Health : public keel::Component<keel::All<HealthCheck>> {
@@ -258,22 +285,18 @@ private:
 
 }  // namespace decisions
 
-TEST(get_all_leaves_disabled_providers_out) {
-    auto app = keel::compose<Health, Check<false>, Check<true>, Check<false, 1>>();
-    app.init();
-    CHECK((app.getComponent<Health>().names() == std::vector<std::string>{"on"}));
-}
+// keel::All<I> needs a provider that is always there.
+static_assert(!keel::isValid<Health, Check<true>>);
+static_assert(keel::isValid<Health, Check<true>, Always>);
 
-TEST(all_with_every_provider_disabled_fails_init) {
-    auto app = keel::compose<Health, Check<false>>();
-    CHECK(initError(app) ==
-          "keel: decisions::Health uses keel::All<decisions::HealthCheck>, and every provider of "
-          "decisions::HealthCheck is disabled (use keel::Optional<keel::All<decisions::HealthCheck>> if none is "
-          "fine)");
+TEST(get_all_leaves_disabled_providers_out) {
+    auto app = keel::compose<Health, Check<false>, Check<true>, Check<false, 1>, Always>();
+    app.init();
+    CHECK((app.getComponent<Health>().names() == std::vector<std::string>{"on", "always"}));
 }
 
 TEST(optional_all_with_every_provider_disabled_is_empty) {
-    auto app = keel::compose<Plugins, Check<false>>();
+    auto app = keel::compose<Plugins, Check<false>, Check<false, 1>>();
     app.init();
     CHECK(app.getComponent<Plugins>().count() == 0);
 }
@@ -288,7 +311,7 @@ struct Cache {
     virtual std::string kind() const = 0;
 };
 
-class RedisCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache {
+class RedisCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache, public keel::Conditional {
 public:
     std::string kind() const override { return "redis"; }
 
@@ -302,7 +325,7 @@ private:
     void start() override { events.push_back("start RedisCache"); }
 };
 
-class MemoryCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache {
+class MemoryCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache, public keel::Conditional {
 public:
     std::string kind() const override { return "memory"; }
 
@@ -343,7 +366,8 @@ class Warmup : public keel::Component<keel::InitAfter<Cache>> {
     void init() override { events.push_back("init Warmup"); }
 };
 
-class Caches : public keel::Component<keel::All<Cache>> {
+// keel::All<Cache> would be an error: every alternative is conditional.
+class Caches : public keel::Component<keel::Optional<keel::All<Cache>>> {
 public:
     std::vector<std::string> kinds() const { return kinds_; }
 
@@ -409,12 +433,18 @@ TEST(several_enabled_alternatives_fail_init) {
     }
 }
 
-TEST(get_all_gets_the_enabled_alternatives) {
-    settings = {};
-    settings.cache = "both";
-    auto app = keel::compose<Caches, RedisCache, MemoryCache, Config>();
-    app.init();
-    CHECK((app.getComponent<Caches>().kinds() == std::vector<std::string>{"redis", "memory"}));
+TEST(optional_all_gets_the_enabled_alternatives) {
+    for (const char* choice : {"both", "redis", "none"}) {
+        settings = {};
+        settings.cache = choice;
+        auto app = keel::compose<Caches, RedisCache, MemoryCache, Config>();
+        app.init();
+        const std::vector<std::string> expected =
+            settings.cache == "both"    ? std::vector<std::string>{"redis", "memory"}
+            : settings.cache == "redis" ? std::vector<std::string>{"redis"}
+                                        : std::vector<std::string>{};
+        CHECK(app.getComponent<Caches>().kinds() == expected);
+    }
 }
 
 TEST(the_root_gets_an_alternative_only_after_init) {

@@ -16,14 +16,19 @@ show up in compile errors, not in your code.
 | `keel::Optional<T>` | optional dependency |
 | `keel::InitAfter<T>` | ordering only |
 | `keel::Provides<I>` | implements the interface `I` (derive from `I` publicly too) |
-| `keel::Alternative<I>` | implements `I`, one of several chosen at runtime |
+| `keel::Alternative<I>` | implements `I`, one of several chosen at runtime (the component must be a `keel::Conditional`) |
 | `keel::All<I>` | every provider of `I`, at least one |
 | `keel::Optional<keel::All<I>>` | every provider of `I`, possibly none |
-| `keel::AsyncInit` | `enabled()` and `init()` on a thread of their own |
+| `keel::AsyncInit` | `init()` (and a `keel::Conditional`'s `enabled()`) on a thread of their own |
 | `keel::AsyncStart` | `start()` on a thread of its own |
 
 The listed types may be incomplete in the component's header. Details:
 [Dependencies and interfaces](dependencies.md), [Async startup](async.md).
+
+A component that configuration may turn off also derives from `keel::Conditional`
+(publicly) and overrides `bool enabled() const`. Nothing may require it: dependents list
+`Optional<T>`, `InitAfter<T>` or `Optional<All<I>>`. Details:
+[Decisions at runtime](runtime-decisions.md).
 
 ### Inside a component
 
@@ -31,16 +36,21 @@ The listed types may be incomplete in the component's header. Details:
 |---|---|
 | `T& getComponent<T>() const` | a required dependency (protected) |
 | `T* findComponent<T>() const` | an optional dependency, or `nullptr` (protected) |
-| `std::vector<I*> getAll<I>() const` | the enabled providers of `I`, in init order (protected) |
+| `std::vector<I*> getAll<I>() const` | the providers of `I`, in init order, without disabled ones (protected) |
 | `std::string_view componentName() const noexcept` | this component's name (public) |
-| `virtual bool enabled() const` | return `false` to opt out at runtime (default `true`) |
 | `virtual void init()`, `virtual void start()` | lifecycle hooks, may throw (default: nothing) |
 | `virtual void stop() noexcept`, `virtual void deinit() noexcept` | lifecycle hooks, must not throw (default: nothing) |
 
-The accessors work from `enabled()` and `init()` on, until the component's own `deinit()`
-has run. In `enabled()` keel hasn't checked the dependencies yet: `getAll<I>()` may be
-empty, and a required dependency that is disabled throws `keel::Error`. `componentName()`
-is empty until the component is part of an App (in its constructor, for instance). Details: [Lifecycle](lifecycle.md), [Decisions at runtime](runtime-decisions.md).
+On a `keel::Conditional`:
+
+| | |
+|---|---|
+| `virtual bool enabled() const = 0` | `false` turns the component off; asked once, just before its `init()` (protected) |
+
+The accessors work from `init()` on (and from `enabled()`), until the component's own
+`deinit()` has run. `componentName()` is empty until the component is part of an App (in
+its constructor, for instance). Details: [Lifecycle](lifecycle.md),
+[Decisions at runtime](runtime-decisions.md).
 
 ### Composing
 
@@ -59,12 +69,12 @@ Details: [Composing an application](composition.md).
 
 | | |
 |---|---|
-| `void init()` | `enabled()` and `init()` in init order; once |
+| `void init()` | `init()` in init order (on a `keel::Conditional`, `enabled()` first); once |
 | `void start()` | `start()` in init order; once, after a successful `init()` |
 | `void stop() noexcept` | `stop()` in reverse order, if started |
 | `void deinit() noexcept` | stops if needed, then `deinit()` in reverse order; also run by the destructor |
 | `decltype(auto) run(fn)` | init, start, `fn`, stop, deinit; returns `fn`'s result. `fn`: no arguments, the App, or `&C::f` |
-| `T& getComponent<T>()` | a component, or the one provider of an interface (before `init()` too, except alternatives) |
+| `T& getComponent<T>()` | a component, or the one provider of an interface (before `init()` too, except alternatives; after it, a disabled one throws) |
 | `void setAsync(bool)` | `false`: run async components on the calling thread; before `init()` |
 | `static constexpr std::array<std::string_view, N> initOrder()` | component names in init order |
 | `std::span<const keel::Timing> timings() const` | one entry per lifecycle call that ran |
@@ -86,12 +96,17 @@ Details: [Lifecycle](lifecycle.md), [Inspecting and testing](inspection-and-test
 - A component type exists **once** per application.
 - A component can reach only what it **declared**, and only from `init()` (or `enabled()`)
   on.
+- What a component **requires** is always there: a missing provider, or one that
+  configuration may turn off (`keel::Conditional`), doesn't compile. The one runtime
+  check left is the choice among `Alternative<I>`s: exactly one enabled where an `I` is
+  required, at most one where it is optional.
 - **Construction, init and start** follow dependency order; **stop, deinit and
   destruction** follow the reverse.
 - `start()` runs only after **every** component's `init()`.
 - A failed `init()` or `start()` rolls back what was done, in reverse, and rethrows the
   exception unchanged. `stop()` and `deinit()` can't throw.
-- `getAll<I>()` lists the enabled providers in init order; it is never empty for `All<I>`.
+- `getAll<I>()` lists the enabled providers in init order; it is never empty for `All<I>`
+  (some provider isn't conditional).
 - Everything runs on the calling thread unless a component lists `AsyncInit` or
   `AsyncStart`. Then components with no dependency path between them may run at the same
   time, and `stop()`/`deinit()` still run on the calling thread.
@@ -123,7 +138,7 @@ Details: [Lifecycle](lifecycle.md), [Inspecting and testing](inspection-and-test
 ## Limitations
 
 - **The set of components is fixed at compile time.** Configuration can switch components
-  off (`enabled()`) or choose between implementations (`Alternative<>`), and `main()` can
+  off (`keel::Conditional`) or choose between implementations (`Alternative<>`), and `main()` can
   choose between compositions. Components known only at runtime, such as plugins loaded
   from a configuration file, are not supported.
 - **Constructor arguments go to every component that accepts them,** and a near miss (an
@@ -136,8 +151,6 @@ Details: [Lifecycle](lifecycle.md), [Inspecting and testing](inspection-and-test
   it "not a component" for the rest of the translation unit.
 - **One error per use site.** A mistake is reported once per place that runs into it (two
   components depending on an ambiguous interface: two errors).
-- **`enabled()` is a common name.** A component that has its own `bool enabled() const`
-  overrides the hook with it; one with `bool enabled()` (no `const`) silently doesn't.
 - **Async threads** are one per async component and phase, created when the phase begins.
   Names, stack sizes and affinity are not configurable.
 - **Shared libraries.** A type's identity is the address of a per-type variable. Keep keel's

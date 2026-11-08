@@ -79,13 +79,89 @@ class UsesSelfProvidingClock : public keel::Component<SelfProvidingClock> {};
 static_assert(!keel::isValid<UsesClock, FakeClock>);
 static_assert(keel::isValid<UsesSelfProvidingClock, FakeSelfProvidingClock>);
 
-class RedisCache : public keel::Component<keel::Alternative<Cache>>, public Cache {};
-class MemoryCache : public keel::Component<keel::Alternative<Cache>>, public Cache {};
+class RedisCache : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class MemoryCache : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+    bool enabled() const override { return false; }
+};
 class PlainCache : public keel::Component<keel::Provides<Cache>>, public Cache {};
 class UsesCache : public keel::Component<Cache> {};
+class MaybeCache : public keel::Component<keel::Optional<Cache>> {};
+class AnyCaches : public keel::Component<keel::Optional<keel::All<Cache>>> {};
+class AllCaches : public keel::Component<keel::All<Cache>> {};
+class UnconditionalCache : public keel::Component<keel::Alternative<Cache>>, public Cache {};
 static_assert(keel::isValid<UsesCache, RedisCache, MemoryCache>);
+static_assert(keel::isValid<MaybeCache, RedisCache, MemoryCache>);
+static_assert(keel::isValid<AnyCaches, RedisCache, MemoryCache>);
+static_assert(!keel::isValid<AllCaches, RedisCache, MemoryCache>);  // every provider is conditional
+static_assert(keel::isValid<AllCaches, RedisCache, PlainCache>);    // PlainCache is always there
 static_assert(!keel::isValid<UsesCache, RedisCache, PlainCache>);
 static_assert(keel::isValid<RedisCache, PlainCache>);  // nothing needs one Cache
+static_assert(!keel::isValid<UnconditionalCache>);
+
+// Conditional components: nothing may require one.
+class Uplink : public keel::Component<Config>, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class NeedsUplink : public keel::Component<Uplink> {};
+class MaybeUplink : public keel::Component<keel::Optional<Uplink>> {};
+class AfterUplink : public keel::Component<keel::InitAfter<Uplink>> {};
+class ConditionalNeedsUplink : public keel::Component<Uplink>, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class ConditionalDisk : public keel::Component<keel::Provides<Storage>>, public Storage, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class PrivateConditional : public keel::Component<>, keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class OwnEnabled : public keel::Component<> {  // not conditional: its enabled() is its own
+public:
+    bool enabled() const { return false; }
+};
+class NeedsOwnEnabled : public keel::Component<OwnEnabled> {};
+static_assert(keel::isValid<Uplink, Config>);
+static_assert(!keel::isValid<NeedsUplink, Uplink, Config>);
+static_assert(keel::isValid<MaybeUplink, Uplink, Config>);
+static_assert(keel::isValid<AfterUplink, Uplink, Config>);
+static_assert(!keel::isValid<ConditionalNeedsUplink, Uplink, Config>);
+static_assert(!keel::isValid<UsesStorage, ConditionalDisk>);
+static_assert(keel::isValid<MaybeStorage, ConditionalDisk>);
+static_assert(!keel::isValid<PrivateConditional>);
+static_assert(keel::isValid<NeedsOwnEnabled, OwnEnabled>);
+
+// A concrete alternative is conditional: requiring it by its own type doesn't compile.
+class NeedsRedis : public keel::Component<RedisCache> {};
+static_assert(!keel::isValid<NeedsRedis, RedisCache, MemoryCache>);
+
+// keel::Conditional inherited through a user's template base is detected.
+template <class... Deps>
+class Toggle : public keel::Component<Deps...>, public keel::Conditional {};
+class Feature : public Toggle<Config> {
+    bool enabled() const override { return true; }
+};
+class NeedsFeature : public keel::Component<Feature> {};
+class MaybeFeature : public keel::Component<keel::Optional<Feature>> {};
+static_assert(!keel::isValid<NeedsFeature, Feature, Config>);
+static_assert(keel::isValid<MaybeFeature, Feature, Config>);
+
+// An interface that derives from keel::Conditional makes its providers conditional.
+struct Light : public keel::Conditional {
+    virtual ~Light() = default;
+};
+class Lamp : public keel::Component<keel::Provides<Light>>, public Light {
+    bool enabled() const override { return true; }
+};
+class UsesLight : public keel::Component<Light> {};
+class MaybeLight : public keel::Component<keel::Optional<Light>> {};
+static_assert(!keel::isValid<UsesLight, Lamp>);
+static_assert(keel::isValid<MaybeLight, Lamp>);
+
+// A conditional component inside a bundle is checked like any other.
+using Uplinks = keel::Bundle<Uplink, Config>;
+static_assert(!keel::isValid<Uplinks, NeedsUplink>);
+static_assert(keel::isValid<Uplinks, MaybeUplink>);
 
 // Invalid entries.
 class ConstOptional : public keel::Component<keel::Optional<const Config>> {};
@@ -98,6 +174,9 @@ static_assert(!keel::isValid<ConstProvides>);
 // Collections.
 class DatabaseCheck : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck {};
 class LeftOutCheck : public keel::Component<>, public HealthCheck {};
+class ConditionalCheck : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
 class AllChecks : public keel::Component<keel::All<HealthCheck>> {};
 class AnyChecks : public keel::Component<keel::Optional<keel::All<HealthCheck>>> {};
 class MisnestedChecks : public keel::Component<keel::All<keel::Optional<HealthCheck>>> {};
@@ -106,6 +185,15 @@ static_assert(keel::isValid<AnyChecks>);
 static_assert(!keel::isValid<AllChecks>);
 static_assert(!keel::isValid<AllChecks, DatabaseCheck, LeftOutCheck>);
 static_assert(!keel::isValid<AnyChecks, LeftOutCheck>);
+static_assert(!keel::isValid<AllChecks, ConditionalCheck>);
+static_assert(keel::isValid<AllChecks, ConditionalCheck, DatabaseCheck>);
+static_assert(keel::isValid<AnyChecks, ConditionalCheck>);
+// A composite that provides HealthCheck itself doesn't count for its own All<HealthCheck>:
+// the only other provider is conditional.
+class CompositeCheck : public keel::Component<keel::Provides<HealthCheck>, keel::All<HealthCheck>>,
+                       public HealthCheck {};
+static_assert(!keel::isValid<CompositeCheck, ConditionalCheck>);
+static_assert(keel::isValid<CompositeCheck, ConditionalCheck, DatabaseCheck>);
 static_assert(!keel::isValid<MisnestedChecks, DatabaseCheck>);
 
 // Cycles.

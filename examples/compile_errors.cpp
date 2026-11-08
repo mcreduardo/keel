@@ -2,7 +2,7 @@
 // Each gives exactly one error, naming the mistake and the types involved. docs/errors.md
 // explains each one and its fix.
 //
-// Build: c++ -std=c++20 -I.. -fsyntax-only -DKEEL_ERROR=6 compile_errors.cpp   (1..34)
+// Build: c++ -std=c++20 -I.. -fsyntax-only -DKEEL_ERROR=6 compile_errors.cpp   (1..41)
 // Without KEEL_ERROR it compiles and does nothing.
 //
 //   The compose<...> list               Interfaces and collections
@@ -27,7 +27,14 @@
 //   30 RunTargetAmbiguous              Guards
 //   31 RunTargetNotCallable              34 requireValid (reports the mistake itself)
 //   32 RunNotCallable
-//   33 NotAnApp
+//   33 NotAnApp                        Conditional components
+//                                        35 RequiredConditional
+//                                        36 RequiredConditionalProvider
+//                                        37 OnlyConditionalProviders
+//                                        38 AlternativeNotConditional
+//                                        39 InaccessibleConditional
+//                                        40 enabled() without const (AbstractComponent)
+//                                        41 RunTargetConditional
 
 #include "keel.hpp"
 
@@ -105,7 +112,9 @@ class Service : public keel::Component<Storage> {};
 void mistake() { keel::compose<Service, DiskStorage, MemoryStorage>(); }
 
 #elif KEEL_ERROR == 14  // keel::Alternative<I> mixed with keel::Provides<I>
-class S3Storage : public keel::Component<keel::Alternative<Storage>>, public Storage {};
+class S3Storage : public keel::Component<keel::Alternative<Storage>>, public Storage, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
 class Service : public keel::Component<Storage> {};
 void mistake() { keel::compose<Service, DiskStorage, S3Storage>(); }
 
@@ -243,6 +252,59 @@ void mistake() { keel::run<Logger>([] { return 0; }); }
 #elif KEEL_ERROR == 34  // a guard in a header: the error is the mistake itself
 class Server : public keel::Component<Logger> {};
 static_assert(keel::requireValid<Server, Config>);
+
+#elif KEEL_ERROR == 35  // a required dependency on a component configuration may turn off
+class Uplink : public keel::Component<Config>, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class Dashboard : public keel::Component<Uplink> {};  // keel::Optional<Uplink> is fine
+void mistake() { keel::compose<Dashboard, Uplink, Config>(); }
+
+#elif KEEL_ERROR == 36  // a required interface whose one provider may be turned off
+class S3Storage : public keel::Component<keel::Provides<Storage>>, public Storage, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class Service : public keel::Component<Storage> {};
+void mistake() { keel::compose<Service, S3Storage>(); }
+
+#elif KEEL_ERROR == 37  // keel::All<I> whose providers may all be turned off
+struct HealthCheck {
+    virtual ~HealthCheck() = default;
+};
+class DiskCheck : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {};
+void mistake() { keel::compose<HealthEndpoint, DiskCheck>(); }
+
+#elif KEEL_ERROR == 38  // keel::Alternative<I> without keel::Conditional
+class S3Storage : public keel::Component<keel::Alternative<Storage>>, public Storage {};
+void mistake() { keel::compose<S3Storage>(); }
+
+#elif KEEL_ERROR == 39  // keel::Conditional as a private base (the default for a class)
+class Uplink : public keel::Component<>, keel::Conditional {
+    bool enabled() const override { return true; }
+};
+void mistake() { keel::compose<Uplink>(); }
+
+#elif KEEL_ERROR == 40  // enabled() without const doesn't override keel::Conditional's
+class Uplink : public keel::Component<>, public keel::Conditional {
+    bool enabled() { return true; }
+};
+void mistake() { keel::compose<Uplink>(); }
+
+#elif KEEL_ERROR == 41  // run(&C::f) on a component configuration may turn off
+class Uplink : public keel::Component<>, public keel::Conditional {
+public:
+    int send() { return 0; }
+
+private:
+    bool enabled() const override { return true; }
+};
+void mistake() {
+    auto app = keel::compose<Uplink>();
+    app.run(&Uplink::send);
+}
 
 #endif
 

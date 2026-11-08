@@ -173,9 +173,10 @@ keel: getComponent<T>() requires T to be listed in this component's keel::Compon
 
 Rules:
 
-- **Dependencies are usable from `init()` on** (and from `enabled()`), not in the
-  constructor. Every component is constructed first, then initialized in dependency
-  order. `getComponent` from a constructor throws `keel::Error`.
+- **Dependencies are usable from `init()` on** (and from a
+  [`keel::Conditional`](runtime-decisions.md#keelconditional-a-component-that-may-be-off)'s
+  `enabled()`), not in the constructor. Every component is constructed first, then
+  initialized in dependency order. `getComponent` from a constructor throws `keel::Error`.
 - **Fetch once, keep the pointer.** A lookup is a hash-map access plus lifecycle checks
   (it doesn't allocate), so it isn't meant for a hot path. Resolve dependencies in
   `init()` and store them.
@@ -218,13 +219,11 @@ breaks ties between components that don't depend on each other. More in
 A few mistakes compile and do nothing, because a hook with the wrong signature is just
 another member function:
 
-- `bool enabled()` without `const` (or `void init(int)`) is never called. With `override`
-  it is a compile error instead. **Write `override` on every hook**, and let the compiler
+- `void init(int)` (or `void start(int)`) is never called. With `override` it is a compile
+  error instead. **Write `override` on every hook**, and let the compiler
   remind you: `-Wsuggest-override` (Clang and GCC) warns about a hook written without it,
   and Clang's `-Winconsistent-missing-override` about a class that uses it on some hooks
   only.
-- A component that already has an accessor `bool enabled() const` of its own overrides the
-  hook with it: keel asks it whether the component runs. Rename the accessor.
 - A constructor that takes only some of `compose()`'s arguments is skipped, and the
   component is default-constructed ([Constructor arguments](composition.md#constructor-arguments)).
 

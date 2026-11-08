@@ -34,7 +34,7 @@ spreads through the codebase. keel is built to avoid each:
 | Objection | keel |
 |---|---|
 | Wiring is invisible (annotations, registration, container rules) | Dependencies are on the class line; the composition is one explicit list |
-| Mistakes show up at startup or on first use | Missing, ambiguous and cyclic dependencies don't compile, and the error names the types; only the runtime choices (`enabled()`, `Alternative<>`) are checked when the application starts |
+| Mistakes show up at startup or on first use | Missing, ambiguous and cyclic dependencies don't compile, and the error names the types; nothing may require a component that configuration can turn off, except through `Alternative<>`, whose choice is the one thing checked when the application starts |
 | Ownership and lifetimes are unclear (scopes, transients) | The App owns every component, one instance each, for the life of the application |
 | Interfaces and factories for everything | Meant for coarse components; plain C++ inside, interfaces only where you want to swap |
 | Runtime reflection, RTTI, heap per object | No RTTI; components are stored inside the App; a dependency is looked up once, in `init()`, through a map keyed by a per-type address |
@@ -83,7 +83,9 @@ breaks them, at compile time wherever possible.
    missing says so: `Optional<T>` for one component, `Optional<All<I>>` for a list that may
    be empty.
    *Enforced:* a missing dependency doesn't compile, `All<I>` with no provider doesn't
-   compile, and a required dependency that is disabled at runtime fails `init()`.
+   compile, and neither does a required dependency on a component that configuration may
+   turn off (a `keel::Conditional`): use `Optional<T>` for it. The exception is
+   `Alternative<I>`, whose choice is checked at startup.
 
 3. **Ambiguity is an error, never a guess.** When two components could satisfy "the" `I`,
    keel doesn't pick one for you. You say which one you mean (a
@@ -107,8 +109,11 @@ breaks them, at compile time wherever possible.
 
 6. **The compiler checks the structure; runtime decides only what only runtime knows.**
    Who uses whom, what exists and what's ambiguous are compile-time facts. Runtime is for
-   configuration: `enabled()` and `Alternative<>`, and even those are checked when the
-   application starts.
+   configuration: `keel::Conditional` turns a component off, and nothing may require it
+   except through `Alternative<>`; elsewhere the code declares that it copes
+   (`Optional<T>`, `Optional<All<I>>`). `Alternative<>` chooses
+   among implementations, and its choice (exactly one enabled) is the one thing checked
+   when the application starts.
 
 7. **One place composes the application.** The composition root lists every component.
    Components never create other components, and nothing registers itself from a static

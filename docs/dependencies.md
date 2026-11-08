@@ -7,12 +7,12 @@ Everything a component declares goes in its `keel::Component<...>` list:
 | You write | Meaning | Access |
 |---|---|---|
 | `T` | **Required.** `T` must be composed; it comes first. | `getComponent<T>()` returns `T&` |
-| `keel::Optional<T>` | **Optional.** Used if composed; it comes first if so. | `findComponent<T>()` returns `T*`, `nullptr` if absent |
+| `keel::Optional<T>` | **Optional.** Used if composed; it comes first if so. | `findComponent<T>()` returns `T*`, `nullptr` if absent or disabled |
 | `keel::InitAfter<T>` | **Ordering only.** Come after `T` if `T` is composed. | none |
 | `keel::Provides<I>` | This component **implements the interface `I`**. | others can depend on `I` |
 | `keel::All<I>` | **Every** provider of `I`, **at least one**. | `getAll<I>()` returns `std::vector<I*>`, never empty |
 | `keel::Optional<keel::All<I>>` | Every provider of `I`, **possibly none**. | `getAll<I>()`, possibly empty |
-| `keel::Alternative<I>` | **One of several** implementations of `I`, chosen at runtime. | others depend on plain `I`; see [Decisions at runtime](runtime-decisions.md#keelalternativei-choose-an-implementation-by-configuration) |
+| `keel::Alternative<I>` | **One of several** implementations of `I`, chosen at runtime (with `keel::Conditional`). | others depend on plain `I`; see [Decisions at runtime](runtime-decisions.md#keelalternativei-implementations-that-are-components-of-their-own) |
 | `keel::AsyncInit`, `keel::AsyncStart` | Run this component's `init()` / `start()` on a thread of its own. | see [Async startup](async.md) |
 
 "Comes first" means constructed and initialized before this component, and deinitialized
@@ -33,9 +33,10 @@ class Router : public keel::Component<Database, Logger> {
 ```
 
 `Database` must be composed (else `MissingDependency<Router, Database>`) and is
-initialized before `Router`. If `Database` disables itself at runtime (see
-[`enabled()`](runtime-decisions.md#enabled-a-component-that-may-opt-out)), `Router`'s
-`init()` fails with `keel::Error` before it runs.
+initialized before `Router`. It can't be a component that configuration may turn off (a
+[`keel::Conditional`](runtime-decisions.md#keelconditional-a-component-that-may-be-off)):
+that is a compile error, `RequiredConditional<Router, Database>`. A required dependency is
+always there.
 
 ## Optional: `keel::Optional<T>`
 
@@ -53,8 +54,9 @@ class HttpServer : public keel::Component<Router, keel::Optional<Metrics>> {
 };
 ```
 
-If `Metrics` is composed, it comes before `HttpServer`. If it isn't, or if it is disabled
-at runtime, `findComponent` returns `nullptr` and the application runs without it.
+If `Metrics` is composed, it comes before `HttpServer`. If it isn't, or if it is a
+`keel::Conditional` that is disabled at runtime, `findComponent` returns `nullptr` and the
+application runs without it.
 
 ## Ordering only: `keel::InitAfter<T>`
 
@@ -103,7 +105,7 @@ auto app = keel::compose<Service, DiskStorage, Config>();
 
 - A dependency on plain `Storage` (required or `Optional`) means "**the** storage": the
   composition must have one provider. With two, it is `AmbiguousDependency`, unless the
-  providers are [alternatives](runtime-decisions.md#keelalternativei-choose-an-implementation-by-configuration)
+  providers are [alternatives](runtime-decisions.md#keelalternativei-implementations-that-are-components-of-their-own)
   or the dependent asks for a specific one through a
   [role interface](patterns.md#picking-one-of-several-providers-role-interfaces).
 - Several providers of an interface are fine in themselves. A component that wants all of
@@ -204,8 +206,11 @@ class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {
 - **A component is not part of its own list.** A composite (a `HealthCheck` that checks
   all the others) lists both `Provides<HealthCheck>` and `All<HealthCheck>` and gets the
   others; it is ordered after them.
-- Disabled providers are left out. If that leaves an `All<I>` empty at runtime, `init()`
-  fails with `keel::Error`.
+- Providers that configuration turned off (a disabled
+  [`keel::Conditional`](runtime-decisions.md#keelconditional-a-component-that-may-be-off))
+  are left out. So that an `All<I>` is never empty, at least one provider must not be
+  conditional, else it is a compile error: `OnlyConditionalProviders<HealthEndpoint,
+  HealthCheck, TypeList<...>>`. `Optional<All<I>>` has no such rule.
 - **Nothing is left out silently.** A composed class that derives from `I` without
   providing it would be missing from the list, so it is a compile error:
   `LeftOutOfAll<HealthEndpoint, HealthCheck, Cache>`.

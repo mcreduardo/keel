@@ -124,7 +124,7 @@ And more:
 
 | Feature | In one line |
 |---|---|
-| [Decisions at runtime](docs/runtime-decisions.md) | a component can opt out (`enabled()`), and configuration can choose between implementations (`keel::Alternative<I>`) |
+| [Decisions at runtime](docs/runtime-decisions.md) | configuration can turn a component off (`keel::Conditional`; requiring one doesn't compile) or choose between implementations (`keel::Alternative<I>`, checked at startup) |
 | [Bundles and guards](docs/composition.md) | name groups of components, compose variants, check every variant on every build (`keel::requireValid`) |
 | [Async startup](docs/async.md) | a slow `init()` or `start()` runs on a thread of its own (`keel::AsyncInit`, `keel::AsyncStart`), opt-in |
 | [Introspection](docs/inspection-and-testing.md) | the init order at compile time, timings of every lifecycle call, the graph for Graphviz |
@@ -141,7 +141,7 @@ in about 1 s on top of the standard headers (Apple clang 17, `-O0`, Apple M1).
 | [Dependencies and interfaces](docs/dependencies.md) | required, `Optional`, `InitAfter`, `Provides`, `All`, `Optional<All>` |
 | [Lifecycle](docs/lifecycle.md) | `init` / `start` / `stop` / `deinit`, guarantees, failures and rollback, `run` |
 | [Composing an application](docs/composition.md) | `compose`, `App`, constructor arguments, `Bundle`, several compositions |
-| [Decisions at runtime](docs/runtime-decisions.md) | `enabled()`, `Alternative`, turning a feature off |
+| [Decisions at runtime](docs/runtime-decisions.md) | choosing an implementation (a factory, or `Alternative`), `Conditional`, turning a feature off |
 | [Async startup](docs/async.md) | `AsyncInit`, `AsyncStart`, scheduling, thread safety, `setAsync` |
 | [Inspecting and testing](docs/inspection-and-testing.md) | `requireValid`, `isValid`, init order, timings, the DOT graph, testing with fakes |
 | [Errors](docs/errors.md) | every compile-time diagnostic with its fix, and every runtime `keel::Error` |
@@ -159,12 +159,12 @@ top; the CMake build compiles all of them and runs them as tests.
 | [`compose.cpp`](examples/compose.cpp) | components, `getComponent`, `Optional`, the composition root |
 | [`interfaces.cpp`](examples/interfaces.cpp) | `Provides`, `All`, `Optional<All>`, build variants, a test with fakes |
 | [`lifecycle.cpp`](examples/lifecycle.cpp) | `init`/`start`/`stop`/`deinit`, `InitAfter`, `run`, rollback of a failed start |
-| [`runtime_choices.cpp`](examples/runtime_choices.cpp) | `enabled()`, `Alternative`, `keel::run` with a member function |
+| [`runtime_choices.cpp`](examples/runtime_choices.cpp) | a factory component, `Conditional`, `Alternative`, `keel::run` with a member function |
 | [`async.cpp`](examples/async.cpp) | `AsyncInit`, `AsyncStart`, `setAsync(false)` |
 | [`introspection.cpp`](examples/introspection.cpp) | `initOrder()`, `timings()`, `toDot()` |
 | [`bundles.cpp`](examples/bundles.cpp) | `Bundle`, several compositions, `requireValid`, `isValid` |
 | [`telemetryd.cpp`](examples/telemetryd.cpp) | a small telemetry agent: seven components, no god class |
-| [`compile_errors.cpp`](examples/compile_errors.cpp) | every compile-time check: build with `-DKEEL_ERROR=1` … `34` |
+| [`compile_errors.cpp`](examples/compile_errors.cpp) | every compile-time check: build with `-DKEEL_ERROR=1` … `41` |
 
 ## Requirements
 

@@ -100,21 +100,10 @@ A robot variant without a front IMU then fails to compile, naming `Odometry` and
 ## Switching a feature off with a null object
 
 When dependents require an interface and the feature must be off in some configurations,
-compose a do-nothing implementation as an `Alternative`:
-
-```cpp
-class NetworkUplink : public keel::Component<Config, Network, keel::Alternative<Uplink>>, public Uplink {
-    bool enabled() const override { return getComponent<Config>().online(); }
-    void send(const Sample& sample) override;  // the real upload
-};
-
-class NullUplink : public keel::Component<Config, keel::Alternative<Uplink>>, public Uplink {
-    bool enabled() const override { return !getComponent<Config>().online(); }
-    void send(const Sample&) override {}  // drop
-};
-```
-
-Which tool to use for which kind of dependent is in
+provide a do-nothing implementation of the interface (drop uploads, skip metrics), and let
+one component create the real one or the do-nothing one from configuration. Dependents
+keep calling the interface either way. The example, and when to use
+`keel::Alternative<I>` instead, are in
 [Decisions at runtime](runtime-decisions.md#turning-a-feature-off-which-tool-to-use).
 
 ## Fakes for tests

@@ -5,8 +5,12 @@ struct Cache {
     virtual ~Cache() = default;
 };
 
-class RedisCache : public keel::Component<keel::Alternative<Cache>> {};
-class MemoryCache : public keel::Component<keel::Alternative<Cache>>, public Cache {};
+class RedisCache : public keel::Component<keel::Alternative<Cache>>, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class MemoryCache : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
 
 static_assert(!keel::isValid<RedisCache, MemoryCache>, "isValid disagrees with compose");
 
