@@ -156,13 +156,13 @@ void inRounds(Body body) {
 
 namespace meet {
 Meeting meeting(2);
-class Left : public Logged<keel::AsyncInit> {
+class Left : public Logged<>, public keel::AsyncInit {
     void init() override {
         log("init");
         if (!meeting.arriveAndWait()) throw Failure("Left waited alone");
     }
 };
-class Right : public Logged<keel::AsyncInit> {
+class Right : public Logged<>, public keel::AsyncInit {
     void init() override {
         log("init");
         if (!meeting.arriveAndWait()) throw Failure("Right waited alone");
@@ -181,7 +181,7 @@ private:
         port = 8080;
     }
 };
-class Database : public Logged<Config, keel::AsyncInit> {
+class Database : public Logged<Config>, public keel::AsyncInit {
 public:
     int port = 0;
 
@@ -205,7 +205,7 @@ private:
 
 namespace overtake {
 Gate otherDone;
-class Slow : public Logged<keel::AsyncInit> {
+class Slow : public Logged<>, public keel::AsyncInit {
     void init() override {
         log("init");
         if (!otherDone.wait()) throw Failure("the calling thread waited for Slow instead of running Other");
@@ -229,7 +229,7 @@ class Unrelated : public Logged<> {
     }
 };
 class Feeder : public Logged<> {};
-class Async : public Logged<Feeder, keel::AsyncInit> {
+class Async : public Logged<Feeder>, public keel::AsyncInit {
     void init() override {
         log("init");
         asyncDone.open();
@@ -239,8 +239,8 @@ class Async : public Logged<Feeder, keel::AsyncInit> {
 
 namespace chain {
 Gate secondDone;
-class First : public Logged<keel::AsyncInit> {};
-class Second : public Logged<First, keel::AsyncInit> {
+class First : public Logged<>, public keel::AsyncInit {};
+class Second : public Logged<First>, public keel::AsyncInit {
     void init() override {
         log("init");
         secondDone.open();
@@ -334,15 +334,17 @@ struct Cache {
 };
 bool redisWanted = false;
 
-class Redis : public Logged<keel::AsyncInit>, public keel::Alternative<Cache>, public Cache, public keel::Conditional {
+class Redis : public Logged<>, public keel::AsyncInit, public keel::Alternative<Cache>, public Cache,
+              public keel::Conditional {
     bool enabled() const override { return redisWanted; }
     std::string_view kind() const override { return "redis"; }
 };
-class Memory : public Logged<keel::AsyncInit>, public keel::Alternative<Cache>, public Cache, public keel::Conditional {
+class Memory : public Logged<>, public keel::AsyncInit, public keel::Alternative<Cache>, public Cache,
+               public keel::Conditional {
     bool enabled() const override { return !redisWanted; }
     std::string_view kind() const override { return "memory"; }
 };
-class Repository : public Logged<Cache, keel::AsyncInit> {
+class Repository : public Logged<Cache>, public keel::AsyncInit {
 public:
     std::string_view cache;
 
@@ -353,9 +355,9 @@ private:
     }
 };
 
-class Spell : public Logged<keel::AsyncInit>, public keel::Provides<Plugin>, public Plugin {};
+class Spell : public Logged<>, public keel::AsyncInit, public keel::Provides<Plugin>, public Plugin {};
 class Grammar : public Logged<>, public keel::Provides<Plugin>, public Plugin {};
-class Menu : public Logged<keel::All<Plugin>, keel::AsyncInit> {
+class Menu : public Logged<keel::All<Plugin>>, public keel::AsyncInit {
 public:
     std::size_t plugins = 0;
 
@@ -365,17 +367,18 @@ private:
         plugins = getAll<Plugin>().size();
     }
 };
-class Late : public Logged<keel::InitAfter<Menu>, keel::AsyncInit> {};
-class Draft : public Logged<keel::AsyncInit>, public keel::Provides<Plugin>, public Plugin, public keel::Conditional {
+class Late : public Logged<keel::InitAfter<Menu>>, public keel::AsyncInit {};
+class Draft : public Logged<>, public keel::AsyncInit, public keel::Provides<Plugin>, public Plugin,
+              public keel::Conditional {
     bool enabled() const override { return false; }
 };
 
-class Thrower : public Logged<keel::AsyncInit>, public keel::Conditional {
+class Thrower : public Logged<>, public keel::AsyncInit, public keel::Conditional {
     bool enabled() const override { throw Failure("enabled"); }
 };
 class Fine : public Logged<> {};
 
-class Probe : public Logged<keel::AsyncInit>, public keel::Conditional {
+class Probe : public Logged<>, public keel::AsyncInit, public keel::Conditional {
 public:
     bool on = true;
 
@@ -475,7 +478,7 @@ namespace failures {
 Gate runningStarted;
 Gate aboutToThrow;
 class Base : public Logged<> {};
-class Running : public Logged<Base, keel::AsyncInit> {
+class Running : public Logged<Base>, public keel::AsyncInit {
     void init() override {
         log("init");
         runningStarted.open();
@@ -483,7 +486,7 @@ class Running : public Logged<Base, keel::AsyncInit> {
         log("init end");
     }
 };
-class Fails : public Logged<Base, keel::AsyncInit> {
+class Fails : public Logged<Base>, public keel::AsyncInit {
     void init() override {
         log("init");
         if (!runningStarted.wait()) throw Failure("Running never started");
@@ -492,11 +495,11 @@ class Fails : public Logged<Base, keel::AsyncInit> {
     }
 };
 class Dependent : public Logged<Fails> {};
-class AsyncDependent : public Logged<Fails, keel::AsyncInit> {};
+class AsyncDependent : public Logged<Fails>, public keel::AsyncInit {};
 
 Meeting bothRunning(2);
 Gate secondThrew;
-class FirstToFail : public Logged<keel::AsyncInit> {
+class FirstToFail : public Logged<>, public keel::AsyncInit {
     void init() override {
         log("init");
         if (!bothRunning.arriveAndWait()) throw Failure("alone");
@@ -506,7 +509,7 @@ class FirstToFail : public Logged<keel::AsyncInit> {
         throw Failure("FirstToFail");
     }
 };
-class SecondToFail : public Logged<keel::AsyncInit> {
+class SecondToFail : public Logged<>, public keel::AsyncInit {
     void init() override {
         log("init");
         if (!bothRunning.arriveAndWait()) throw Failure("alone");
@@ -517,7 +520,7 @@ class SecondToFail : public Logged<keel::AsyncInit> {
 
 Gate asyncStarted;
 Gate syncThrowing;
-class AsyncWorker : public Logged<keel::AsyncInit> {
+class AsyncWorker : public Logged<>, public keel::AsyncInit {
     void init() override {
         log("init");
         asyncStarted.open();
@@ -613,14 +616,14 @@ namespace starts {
 Meeting bothStarting(2);
 Gate feedStarted;
 class Config : public Logged<> {};
-class Slow : public Logged<Config, keel::AsyncInit> {};
-class Feed : public Logged<Config, keel::AsyncStart> {
+class Slow : public Logged<Config>, public keel::AsyncInit {};
+class Feed : public Logged<Config>, public keel::AsyncStart {
     void start() override {
         log("start");
         if (!bothStarting.arriveAndWait()) throw Failure("Feed started alone");
     }
 };
-class Ticker : public Logged<keel::AsyncStart> {
+class Ticker : public Logged<>, public keel::AsyncStart {
     void start() override {
         log("start");
         if (!bothStarting.arriveAndWait()) throw Failure("Ticker started alone");
@@ -628,26 +631,26 @@ class Ticker : public Logged<keel::AsyncStart> {
 };
 class Gateway : public Logged<Feed> {};
 
-class Broken : public Logged<Config, keel::AsyncStart> {
+class Broken : public Logged<Config>, public keel::AsyncStart {
     void start() override {
         log("start");
         if (!feedStarted.wait()) throw Failure("Starter never started");
         throw Failure("Broken");
     }
 };
-class Starter : public Logged<Config, keel::AsyncStart> {
+class Starter : public Logged<Config>, public keel::AsyncStart {
     void start() override {
         log("start");
         feedStarted.open();
     }
 };
 
-class Child : public Logged<Broken, keel::AsyncStart> {};
+class Child : public Logged<Broken>, public keel::AsyncStart {};
 
-class Off : public Logged<keel::AsyncStart>, public keel::Conditional {
+class Off : public Logged<>, public keel::AsyncStart, public keel::Conditional {
     bool enabled() const override { return false; }
 };
-class Spinner : public Logged<keel::AsyncStart> {};
+class Spinner : public Logged<>, public keel::AsyncStart {};
 }  // namespace starts
 
 TEST(async_starts_run_at_the_same_time_after_every_init) {
@@ -713,11 +716,11 @@ TEST(a_disabled_async_start_component_does_not_start) {
 
 namespace running {
 class Config : public Logged<> {};
-class Database : public Logged<Config, keel::AsyncInit, keel::AsyncStart> {
+class Database : public Logged<Config>, public keel::AsyncInit, public keel::AsyncStart {
 public:
     int answer() const { return 42; }
 };
-class Server : public Logged<Database, keel::AsyncStart> {
+class Server : public Logged<Database>, public keel::AsyncStart {
 public:
     int serve() { return getComponent<Database>().answer(); }
 };
@@ -754,6 +757,35 @@ TEST(to_dot_marks_async_components) {
     CHECK(dot.find("Database\\nasync init\\nasync start\"") != std::string::npos);
     CHECK(dot.find("Server\\nasync start\"") != std::string::npos);
     CHECK(dot.find("Config\"") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Inherited async base classes
+
+namespace inherited {
+class Config : public Logged<> {};
+class Database : public Logged<Config>, public keel::AsyncInit {};
+class FastDatabase : public Database {};  // async through its component base class
+template <class Base>
+class Started : public Base, public keel::AsyncStart {};
+class Feed : public Started<Logged<Config>> {};  // keel::AsyncStart through a template base
+}  // namespace inherited
+
+TEST(async_base_classes_are_inherited) {
+    inRounds([] {
+        keel::App<inherited::Config, inherited::FastDatabase, inherited::Feed> app;
+        app.init();
+        app.start();
+        CHECK(onMainThread("init Config"));
+        CHECK(!onMainThread("init FastDatabase"));
+        CHECK(onMainThread("init Feed"));
+        CHECK(!onMainThread("start Feed"));
+        app.deinit();
+    });
+    keel::App<inherited::Config, inherited::FastDatabase, inherited::Feed> app;
+    const std::string dot = app.toDot();
+    CHECK(dot.find("FastDatabase\\nasync init\"") != std::string::npos);
+    CHECK(dot.find("Feed\\nasync start\"") != std::string::npos);
 }
 
 // ---------------------------------------------------------------------------
@@ -804,7 +836,7 @@ struct Hook {  // installs the hook for one test, also if it fails
     ~Hook() { keel::detail::testHooks.beforeThread = nullptr; }
 };
 
-class First : public Logged<keel::AsyncInit, keel::AsyncStart> {
+class First : public Logged<>, public keel::AsyncInit, public keel::AsyncStart {
     void init() override {
         log("init");
         firstRan.open();
@@ -814,7 +846,7 @@ class First : public Logged<keel::AsyncInit, keel::AsyncStart> {
         firstRan.open();
     }
 };
-class Second : public Logged<keel::AsyncInit, keel::AsyncStart> {};
+class Second : public Logged<>, public keel::AsyncInit, public keel::AsyncStart {};
 class Later : public Logged<Second> {};
 
 bool failedEntry(std::span<const keel::Timing> timings, keel::Phase phase) {

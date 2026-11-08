@@ -1,5 +1,5 @@
-// Must not compile: keel::AsyncInit goes in a component's keel::Component<...> list, not in
-// compose<...>.
+// Must not compile: keel::AsyncInit is a base class of a component, not something to list
+// in compose<...>.
 #include <keel.hpp>
 
 class Database : public keel::Component<> {};

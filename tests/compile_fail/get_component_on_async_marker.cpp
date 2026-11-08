@@ -1,7 +1,7 @@
-// Must not compile: keel::AsyncInit is a marker, not a dependency to look up.
+// Must not compile: keel::AsyncInit is a base class, not a dependency to look up.
 #include <keel.hpp>
 
-class Database : public keel::Component<keel::AsyncInit> {
+class Database : public keel::Component<>, public keel::AsyncInit {
     void init() override { getComponent<keel::AsyncInit>(); }
 };
 

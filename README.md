@@ -84,6 +84,9 @@ features together.
 
 ## Features
 
+The `Component<...>` list says what a component needs; what it is (`Provides<I>`,
+`Alternative<I>`, `Conditional`, `AsyncInit`, `AsyncStart`) goes in its other base classes.
+
 **Every dependency is declared.** Required, optional, or ordering only; the accessor must
 match the declaration.
 
@@ -126,7 +129,7 @@ And more:
 |---|---|
 | [Decisions at runtime](docs/runtime-decisions.md) | configuration can turn a component off (`keel::Conditional`; requiring one doesn't compile) or choose between implementations (`keel::Alternative<I>`, checked at startup) |
 | [Bundles and guards](docs/composition.md) | name groups of components, compose variants, check every variant on every build (`keel::requireValid`) |
-| [Async startup](docs/async.md) | a slow `init()` or `start()` runs on a thread of its own (`keel::AsyncInit`, `keel::AsyncStart`), opt-in |
+| [Async startup](docs/async.md) | a slow `init()` or `start()` runs on a thread of its own (base classes `keel::AsyncInit`, `keel::AsyncStart`), opt-in |
 | [Introspection](docs/inspection-and-testing.md) | the init order at compile time, timings of every lifecycle call, the graph for Graphviz |
 
 **Compile time.** keel's test with 150 components (up to five dependencies each) compiles
@@ -164,7 +167,7 @@ top; the CMake build compiles all of them and runs them as tests.
 | [`introspection.cpp`](examples/introspection.cpp) | `initOrder()`, `timings()`, `toDot()` |
 | [`bundles.cpp`](examples/bundles.cpp) | `Bundle`, several compositions, `requireValid`, `isValid` |
 | [`telemetryd.cpp`](examples/telemetryd.cpp) | a small telemetry agent: seven components, no god class |
-| [`compile_errors.cpp`](examples/compile_errors.cpp) | every compile-time check: build with `-DKEEL_ERROR=1` … `46` |
+| [`compile_errors.cpp`](examples/compile_errors.cpp) | every compile-time check: build with `-DKEEL_ERROR=1` … `48` |
 
 ## Requirements
 

@@ -2,7 +2,7 @@
 // Each gives exactly one error, naming the mistake and the types involved. docs/errors.md
 // explains each one and its fix.
 //
-// Build: c++ -std=c++20 -I.. -fsyntax-only -DKEEL_ERROR=6 compile_errors.cpp   (1..46)
+// Build: c++ -std=c++20 -I.. -fsyntax-only -DKEEL_ERROR=6 compile_errors.cpp   (1..48)
 // Without KEEL_ERROR it compiles and does nothing.
 //
 //   The compose<...> list            Interfaces and collections
@@ -19,17 +19,17 @@
 //     9 BundleAsDependency             44 ProvidesAndAlternative
 //    10 MisplacedAsync                 45 AlternativeAsDependency
 //    11 a dependency listed twice      46 InaccessibleAlternative
-//
-//   The composition root             Inside a component
-//    27 NotInApp                       20 getComponent<T>() on an undeclared T
-//    28 AmbiguousInterface             21 getComponent<T>() on keel::Optional<T>
-//    29 RunTargetNotComposed           22 getComponent<T>() on keel::InitAfter<T>
-//    30 RunTargetAmbiguous             23 findComponent<T>() on a required T
-//    31 RunTargetNotCallable           24 getAll<I>() on a required I
-//    32 RunNotCallable                 25 getComponent<keel::AsyncInit>()
-//    33 NotAnApp                       26 stop() without noexcept
-//
-//                                    Guards
+//    47 AsyncAsDependency
+//    48 InaccessibleAsync            Inside a component
+//                                      20 getComponent<T>() on an undeclared T
+//   The composition root               21 getComponent<T>() on keel::Optional<T>
+//    27 NotInApp                       22 getComponent<T>() on keel::InitAfter<T>
+//    28 AmbiguousInterface             23 findComponent<T>() on a required T
+//    29 RunTargetNotComposed           24 getAll<I>() on a required I
+//    30 RunTargetAmbiguous             25 getComponent<keel::AsyncInit>()
+//    31 RunTargetNotCallable           26 stop() without noexcept
+//    32 RunNotCallable
+//    33 NotAnApp                     Guards
 //                                      34 requireValid (reports the mistake itself)
 //
 //                                    Conditional components
@@ -100,7 +100,7 @@ using Core = keel::Bundle<Config, Logger>;
 class Server : public keel::Component<Core> {};
 void mistake() { keel::compose<Server, Core>(); }
 
-#elif KEEL_ERROR == 10  // keel::AsyncInit inside another marker
+#elif KEEL_ERROR == 10  // keel::AsyncInit inside another entry
 class Database : public keel::Component<Config, keel::Optional<keel::AsyncInit>> {};
 void mistake() { keel::compose<Database, Config>(); }
 
@@ -187,8 +187,8 @@ class Inventory : public keel::Component<Storage> {
     void init() override { getAll<Storage>(); }
 };
 
-#elif KEEL_ERROR == 25  // a marker is not a dependency
-class Database : public keel::Component<Config, keel::AsyncInit> {
+#elif KEEL_ERROR == 25  // keel::AsyncInit is a base class, not a dependency to look up
+class Database : public keel::Component<Config>, public keel::AsyncInit {
     void init() override { getComponent<keel::AsyncInit>(); }
 };
 
@@ -348,6 +348,14 @@ class S3Storage : public keel::Component<>, keel::Alternative<Storage>, public S
 };
 class Service : public keel::Component<Storage> {};
 void mistake() { keel::compose<Service, S3Storage>(); }
+
+#elif KEEL_ERROR == 47  // keel::AsyncInit listed as a dependency instead of inherited
+class Database : public keel::Component<Config, keel::AsyncInit> {};
+void mistake() { keel::compose<Database, Config>(); }
+
+#elif KEEL_ERROR == 48  // keel::AsyncInit as a private base (the default for a class)
+class Database : public keel::Component<Config>, keel::AsyncInit {};
+void mistake() { keel::compose<Database, Config>(); }
 
 #endif
 

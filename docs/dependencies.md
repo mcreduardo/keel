@@ -2,9 +2,10 @@
 
 [keel](../README.md) › docs › Dependencies and interfaces
 
-What a component **needs** goes in its `keel::Component<...>` list, along with the markers
-`keel::AsyncInit` and `keel::AsyncStart`. The interfaces it **implements** are base
-classes, `keel::Provides<I>` or `keel::Alternative<I>`:
+What a component **needs** goes in its `keel::Component<...>` list, and only that. What it
+**is** goes in its base classes: the interfaces it implements (`keel::Provides<I>`,
+`keel::Alternative<I>`) and how it runs (`keel::Conditional`, `keel::AsyncInit`,
+`keel::AsyncStart`):
 
 | You write | Meaning | Access |
 |---|---|---|
@@ -13,13 +14,13 @@ classes, `keel::Provides<I>` or `keel::Alternative<I>`:
 | `keel::InitAfter<T>` | **Ordering only.** Come after `T` if `T` is composed. | none |
 | `keel::All<I>` | **Every** provider of `I`, **at least one**. | `getAll<I>()` returns `std::vector<I*>`, never empty |
 | `keel::Optional<keel::All<I>>` | Every provider of `I`, **possibly none**. | `getAll<I>()`, possibly empty |
-| `keel::AsyncInit`, `keel::AsyncStart` | Run this component's `init()` / `start()` on a thread of its own. | see [Async startup](async.md) |
 
 | You derive from | Meaning | Effect |
 |---|---|---|
 | `public keel::Provides<I>` | This component **implements the interface `I`**. | others can depend on `I` |
 | `public keel::Alternative<I>` | **One of several** implementations of `I`, chosen at runtime (with `keel::Conditional`). | others depend on plain `I`; see [Decisions at runtime](runtime-decisions.md#keelalternativei-implementations-that-are-components-of-their-own) |
 | `public keel::Conditional` | Configuration may turn it off. | see [Decisions at runtime](runtime-decisions.md#keelconditional-a-component-that-may-be-off) |
+| `public keel::AsyncInit`, `public keel::AsyncStart` | Run this component's `init()` / `start()` on a thread of its own. | see [Async startup](async.md) |
 
 "Comes first" means constructed and initialized before this component, and deinitialized
 and destroyed after it.

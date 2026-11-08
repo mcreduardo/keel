@@ -116,14 +116,15 @@ Fix: list the components it uses, each on its own. A bundle only groups componen
 `compose<...>`.
 
 **`MisplacedAsync<C, Entry>`** (10). `keel::AsyncInit` or `keel::AsyncStart` inside another
-marker, such as `keel::Optional<keel::AsyncInit>`.
+entry, such as `keel::Optional<keel::AsyncInit>`.
 
-Fix: list the marker on its own: `keel::Component<Config, keel::AsyncInit>`.
+Fix: they are base classes: `class C : public keel::Component<Config>, public
+keel::AsyncInit`.
 
 **A dependency listed twice** (11). `T`, `Optional<T>`, `InitAfter<T>`, `All<T>` and
-`Optional<All<T>>` all name `T`; two of them in one list is an error. The same goes for a
-marker listed twice. (Listing `keel::Provides<I>` or `keel::Alternative<I>` twice is this
-error too; its message says to inherit it instead, as in 42 and 45.)
+`Optional<All<T>>` all name `T`; two of them in one list is an error. (Listing
+`keel::Provides<I>`, `keel::Alternative<I>`, `keel::AsyncInit` or `keel::AsyncStart` twice
+is this error too; its message says to inherit it instead, as in 42, 45 and 47.)
 
 ```cpp
 class Server : public keel::Component<Logger, keel::Optional<Logger>> {};
@@ -131,6 +132,19 @@ class Server : public keel::Component<Logger, keel::Optional<Logger>> {};
 ```
 
 Fix: keep the one entry that says what you mean.
+
+**`AsyncAsDependency<C, Marker>`** (47). `C` lists `keel::AsyncInit` or `keel::AsyncStart`
+in its `keel::Component<...>`, which lists only dependencies.
+
+```cpp
+class Database : public keel::Component<Config, keel::AsyncInit> {};  // AsyncAsDependency<Database, keel::AsyncInit>
+```
+
+Fix: inherit it: `class Database : public keel::Component<Config>, public keel::AsyncInit`.
+
+**`InaccessibleAsync<T>`** (48). `T` derives from `keel::AsyncInit` or `keel::AsyncStart`
+privately (the default for a `class`), protectedly, or more than once (itself and through
+an async base), so keel can't see it. Fix: `public keel::AsyncInit`, once.
 
 ### Interfaces and collections
 
@@ -228,8 +242,8 @@ derive `I` itself from it), or stop deriving from `I`.
 `keel::Optional<keel::All<I>>` for a list that may be empty.
 
 **`ProvidesAsDependency<C, I>`** (42). `C` lists `keel::Provides<I>` in its
-`keel::Component<...>`. The list says what a component needs (plus the `keel::AsyncInit`
-and `keel::AsyncStart` markers); what it implements goes in its base classes.
+`keel::Component<...>`. The list says only what a component needs; what it implements goes
+in its base classes.
 
 ```cpp
 class S3Storage : public keel::Component<keel::Provides<Storage>>, public Storage {};
@@ -304,7 +318,7 @@ accessor to use instead.
 | `getAll<I>()` on a required `I` (24), `Optional<I>` or `InitAfter<I>` | `I is a required dependency (one provider); use getComponent<I>(), or replace it with keel::All<I> ...` | `getComponent`/`findComponent`, or list `All<I>` |
 | `getAll<I>()` without `All<I>` | `getAll<I>() requires keel::All<I> or keel::Optional<keel::All<I>> ...` | list one of them |
 | `getComponent<T>()`/`findComponent<T>()` on `All<T>` | `T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()` | `getAll<T>()` |
-| `getComponent<keel::AsyncInit>()` (25) | `keel::AsyncInit and keel::AsyncStart are markers, not dependencies` | nothing to get |
+| `getComponent<keel::AsyncInit>()` (25) | `keel::AsyncInit and keel::AsyncStart are base classes, not dependencies` | nothing to get |
 | `stop()` or `deinit()` without `noexcept` (26) | the compiler's own: `exception specification of overriding function is more lax than base version` | add `noexcept` |
 
 ### The composition root

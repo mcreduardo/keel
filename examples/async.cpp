@@ -1,10 +1,10 @@
 // async: slow init() and start() on threads of their own.
 //
-// Database and Cache take ~100 ms to connect and list keel::AsyncInit: each runs its
-// init() on its own thread as soon as its dependencies are done. Meanwhile the main
+// Database and Cache take ~100 ms to connect and derive from keel::AsyncInit: each runs
+// its init() on its own thread as soon as its dependencies are done. Meanwhile the main
 // thread initializes what doesn't wait for them (AuditLog), then comes back for Metrics
-// and HttpServer. Feed lists keel::AsyncStart: its start() (subscribing) runs on its own
-// thread too.
+// and HttpServer. Feed derives from keel::AsyncStart: its start() (subscribing) runs on
+// its own thread too.
 //
 // Once any component is async, components with no dependency path between them may run
 // at the same time, sync ones included: the Logger they all share is thread-safe.
@@ -46,11 +46,11 @@ class Config : public keel::Component<Logger> {
 };
 
 // Slow to connect. They don't depend on each other, so they connect at the same time.
-class Database : public keel::Component<Config, Logger, keel::AsyncInit> {
+class Database : public keel::Component<Config, Logger>, public keel::AsyncInit {
     void init() override { getComponent<Logger>().step(componentName(), "init", 100); }
 };
 
-class Cache : public keel::Component<Config, Logger, keel::AsyncInit> {
+class Cache : public keel::Component<Config, Logger>, public keel::AsyncInit {
     void init() override { getComponent<Logger>().step(componentName(), "init", 100); }
 };
 
@@ -66,7 +66,7 @@ class Metrics : public keel::Component<Logger, keel::InitAfter<Database>> {
 
 // Subscribing takes a while: start() on its own thread. start() must return; work that
 // runs until stop() belongs on a thread the component starts here and joins in stop().
-class Feed : public keel::Component<Logger, keel::AsyncStart> {
+class Feed : public keel::Component<Logger>, public keel::AsyncStart {
     void start() override { getComponent<Logger>().step(componentName(), "start", 50); }
     void stop() noexcept override { getComponent<Logger>().step(componentName(), "stop"); }
 };

@@ -12,25 +12,28 @@ and many SDKs require.
 ## Opting in: `keel::AsyncInit` and `keel::AsyncStart`
 
 A component whose `init()` or `start()` is slow (connecting to a database, warming a cache,
-joining multicast groups, loading a model) can run it **on a thread of its own**:
+joining multicast groups, loading a model) can run it **on a thread of its own**, by
+deriving from one of these base classes:
 
 ```cpp
-class Database : public keel::Component<Config, Logger, keel::AsyncInit> {
+class Database : public keel::Component<Config, Logger>, public keel::AsyncInit {
     void init() override;  // connects: runs on its own thread
 };
 
-class FeedHandler : public keel::Component<Config, keel::AsyncStart> {
+class FeedHandler : public keel::Component<Config>, public keel::AsyncStart {
     void start() override;  // joins multicast groups: runs on its own thread
 };
 ```
 
-| Marker | Effect |
+| Base class | Effect |
 |---|---|
 | `keel::AsyncInit` | `init()` (and `enabled()`, for a `keel::Conditional`) run on a thread of their own |
 | `keel::AsyncStart` | `start()` runs on a thread of its own |
 
-List a marker once, on its own: not inside `Optional<...>` or another marker
-(`MisplacedAsync`), and not in `compose<...>`.
+Derive from it publicly, once (privately or twice is `InaccessibleAsync`); a subclass of
+an async component is async too. It is not a dependency: listing it in
+`keel::Component<...>` is `AsyncAsDependency` (`MisplacedAsync` inside `Optional<...>` or
+another entry), and it doesn't go in `compose<...>`.
 
 ## How the scheduling works
 
@@ -109,7 +112,7 @@ app.setAsync(false);  // before init(); afterwards it throws keel::Error
 app.init();           // everything on this thread, in init order
 ```
 
-It runs every component on the calling thread, as if none listed `AsyncInit` or
+It runs every component on the calling thread, as if none derived from `AsyncInit` or
 `AsyncStart`: to debug, to reproduce a run, or to narrow down a race. `keel::run<AppType>`
 doesn't offer it; construct the App yourself.
 

@@ -110,7 +110,7 @@ std::ofstream("graph.dot") << app.toDot();  // then: dot -Tsvg graph.dot -o grap
 ```
 
 One box per component, in init order, listing the interfaces it provides ("provides I",
-"alternative I") and its markers ("async init", "async start"). Only interfaces that some
+"alternative I") and its async base classes ("async init", "async start"). Only interfaces that some
 component of the app refers to are listed: `keel::Provides<I>` is a base class, and keel
 can't list a class's bases, only ask about the interfaces it knows. One arrow per ordering
 edge, from a component to the component it comes after; dependencies are drawn to the

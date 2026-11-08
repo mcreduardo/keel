@@ -109,13 +109,13 @@
     `enabled()`s agree. Alternative: allow it and check at runtime that a required
     conditional dependency is enabled when its dependent is (the old runtime failure, in
     fewer places).
-  - **A base class, not a `Component<...>` list entry.** `AsyncInit` is a list entry
-    (`Provides<I>` and `Alternative<I>` are bases too, since 2026-11-08); `Conditional` is
-    a base so that its pure virtual forces the right signature (a wrong one is an
-    abstract-class error, not a silent non-override). Alternative: a `keel::Conditional`
-    tag in the list plus a check that `enabled()` exists with the right signature
-    (consistent style, but the check is hand-written and the hook would have to live in
-    every component again).
+  - **A base class, not a `Component<...>` list entry.** Like `Provides<I>`,
+    `Alternative<I>`, `AsyncInit` and `AsyncStart` (all bases since 2026-11-08).
+    `Conditional` is a base so that its pure virtual forces the right signature (a wrong
+    one is an abstract-class error, not a silent non-override). Alternative: a
+    `keel::Conditional` tag in the list plus a check that `enabled()` exists with the right
+    signature (consistent style, but the check is hand-written and the hook would have to
+    live in every component again).
   - **`All<I>` needs one provider that isn't conditional**, so it is never empty. An
     `All<I>` over alternatives only is an error too; `Optional<All<I>>` is the way.
     Alternative: allow it and throw at runtime when every provider is off (the old rule).
@@ -395,3 +395,20 @@
   each referred type is asked of every component. The 150-component test in
   `interfaces_test.cpp` takes about 35% more compile time (Apple clang 17, `-fsyntax-only`:
   4.1 s vs 3.0 s CPU); smaller files about 8% more.
+
+- **`AsyncInit` and `AsyncStart` are base classes** (2026-11-08), so `keel::Component<...>`
+  lists only dependencies. Unlike `Provides<I>`, they need no interface, so keel checks each
+  composed component directly: nothing is invisible. A subclass of an async component is
+  async too. Listing one is `AsyncAsDependency<C, Marker>` (or `MisplacedAsync` inside
+  another entry); a private, protected or repeated base is `InaccessibleAsync<T>`, reported
+  with the compose list's own checks (like `InaccessibleConditional`), so the component's
+  other checks wait until it is fixed. Alternative: keep them in the list (they say how a
+  component runs, not what it needs). Revisitable.
+
+- **An interface that derives from `AsyncInit` makes every provider async.** With
+  `struct Storage : keel::AsyncInit`, each component deriving from `Storage` is async
+  without saying so in its own class head (and one that also derives from `AsyncInit`
+  itself is `InaccessibleAsync`, a repeated base). keel accepts it silently. Alternative:
+  an error when `AsyncInit`/`AsyncStart` reaches a component only through a non-component
+  base. Not done yet: it may be intended (a family of slow drivers), and the check needs a
+  way to tell "inherited from a component" from "inherited from an interface". Open.

@@ -85,8 +85,8 @@ template <class T>
 struct InitAfter {};
 
 /// Declares that a component implements the interface I, a plain class it also derives from
-/// publicly. It is a base class, next to keel::Component<...>, which lists what the
-/// component needs (plus the keel::AsyncInit and keel::AsyncStart markers):
+/// publicly. It is a base class, next to keel::Component<...>, which lists only the
+/// component's dependencies:
 ///   class DiskStorage : public keel::Component<Config>, public keel::Provides<Storage>, public Storage
 /// Other components can then list Storage (or keel::Optional<Storage>, or
 /// keel::InitAfter<Storage>) and get the DiskStorage. A component that implements several
@@ -168,10 +168,10 @@ struct Alternative;  // defined below, after the check of I
 template <class I>
 struct All {};
 
-/// Runs this component's init() (and enabled(), for a keel::Conditional) on a thread of its
-/// own, so that a slow init() (connecting to a database, loading a model) doesn't hold up
-/// unrelated components:
-///   class Database : public keel::Component<Config, Logger, keel::AsyncInit> { ... };
+/// A base class that runs this component's init() (and enabled(), for a keel::Conditional)
+/// on a thread of its own, so that a slow init() (connecting to a database, loading a
+/// model) doesn't hold up unrelated components:
+///   class Database : public keel::Component<Config, Logger>, public keel::AsyncInit { ... };
 /// Its init() starts as soon as every component it is ordered after has finished init() (or
 /// is disabled). Everything those init()s did is visible to it.
 ///
@@ -199,13 +199,17 @@ struct All {};
 /// others are dropped, and which components get to fail depends on timing. Each failure is
 /// in App::timings() with `failed`. A thread that can't be created counts as a failure of
 /// its component (std::system_error). App::setAsync(false) runs everything on the calling
-/// thread instead, e.g. to debug. List the marker once, on its own (not inside
-/// keel::Optional<...> or another marker).
+/// thread instead, e.g. to debug.
+///
+/// Derive from it publicly, once (a subclass of an async component is async too):
+/// privately, protectedly or twice is InaccessibleAsync. It is not a dependency: listing it
+/// in keel::Component<...> is AsyncAsDependency.
 struct AsyncInit {};
 
-/// Like keel::AsyncInit, for start(): runs this component's start() on a thread of its own,
-/// as soon as every component it is ordered after has finished start(). start() still
-/// begins only after every component's init() has finished, async ones included.
+/// Like keel::AsyncInit, for start(): a base class that runs this component's start() on a
+/// thread of its own, as soon as every component it is ordered after has finished start().
+/// start() still begins only after every component's init() has finished, async ones
+/// included.
 ///
 /// start() must still return: its thread ends when it does, and App::start() waits for it.
 /// For work that runs until stop(), start your own thread in start() and join it in stop().
@@ -215,7 +219,8 @@ struct AsyncInit {};
 /// Thread affinity: start() runs on a worker thread, stop() on the thread that drives the
 /// App. The rest is as for keel::AsyncInit (shared state, failures). If a start() throws,
 /// the start()s already running finish, the started components are stopped, and every
-/// component is deinitialized, in reverse order on the calling thread.
+/// component is deinitialized, in reverse order on the calling thread. Derive from it as
+/// from keel::AsyncInit.
 struct AsyncStart {};
 
 /// A named group of components, to list in keel::compose<...> or keel::App<...> in place of
@@ -406,9 +411,19 @@ struct MemberOf<R C::*> {
 // How a component uses the type an entry of its keel::Component<...> list names.
 // `misnested` is All<Optional<I>>, and `listedProvides` / `listedAlternative`
 // keel::Provides<I> / keel::Alternative<I>, which are base classes, not entries
-// (ProvidesAsDependency, AlternativeAsDependency); all are reported at compose time.
-// `async` is keel::AsyncInit or keel::AsyncStart, which name no type.
-enum class Use { required, optional, ordering, listedProvides, listedAlternative, all, optionalAll, misnested, async };
+// (ProvidesAsDependency, AlternativeAsDependency), and `listedAsync` keel::AsyncInit or
+// keel::AsyncStart, base classes too (AsyncAsDependency); all are reported at compose time.
+enum class Use {
+    required,
+    optional,
+    ordering,
+    listedProvides,
+    listedAlternative,
+    listedAsync,
+    all,
+    optionalAll,
+    misnested
+};
 
 struct EmptySplit {
     using required = TypeList<>;
@@ -418,14 +433,13 @@ struct EmptySplit {
     using misnested = TypeList<>;
     using listedProvides = TypeList<>;
     using listedAlternatives = TypeList<>;
-    static constexpr bool asyncInit = false;
-    static constexpr bool asyncStart = false;
+    using listedAsync = TypeList<>;
 };
 
 // Separates the entries of a keel::Component<...> list by kind: required, optional,
-// ordering only, collections (All<I>, Optional<All<I>>), the AsyncInit/AsyncStart
-// markers, and a misplaced Provides<I> or Alternative<I>. `target` is the type the entry
-// names (for a marker, the marker itself).
+// ordering only, collections (All<I>, Optional<All<I>>), and the base classes listed by
+// mistake (Provides<I>, Alternative<I>, AsyncInit, AsyncStart). `target` is the type the
+// entry names (for AsyncInit and AsyncStart, the marker itself).
 template <class D>
 struct Split : EmptySplit {
     using required = TypeList<D>;
@@ -478,15 +492,15 @@ struct Split<All<Optional<I>>> : EmptySplit {
 
 template <>
 struct Split<AsyncInit> : EmptySplit {
+    using listedAsync = TypeList<AsyncInit>;
     using target = AsyncInit;
-    static constexpr Use use = Use::async;
-    static constexpr bool asyncInit = true;
+    static constexpr Use use = Use::listedAsync;
 };
 template <>
 struct Split<AsyncStart> : EmptySplit {
+    using listedAsync = TypeList<AsyncStart>;
     using target = AsyncStart;
-    static constexpr Use use = Use::async;
-    static constexpr bool asyncStart = true;
+    static constexpr Use use = Use::listedAsync;
 };
 
 template <class T>
@@ -552,6 +566,13 @@ namespace detail {
 // incomplete C.
 template <class C>
 inline constexpr bool isConditional = std::is_convertible_v<C*, Conditional*>;
+
+// C derives from keel::AsyncInit / keel::AsyncStart publicly and once. (Privately or twice
+// is InaccessibleAsync, at compose time.)
+template <class C>
+inline constexpr bool hasAsyncInit = std::is_convertible_v<C*, AsyncInit*>;
+template <class C>
+inline constexpr bool hasAsyncStart = std::is_convertible_v<C*, AsyncStart*>;
 
 // A C can be used as an I: I could be a component (above) and is C itself or a public,
 // unambiguous base of C. A pointer conversion checks access and ambiguity, and is simply
@@ -796,8 +817,8 @@ public:
         base.needCount_ = Needs<C>::table.size();
         base.name_ = typeName<C>();
         if constexpr (isConditional<C>) base.conditional_ = &component;
-        base.asyncInit_ = ComponentOf<C>::asyncInit;
-        base.asyncStart_ = ComponentOf<C>::asyncStart;
+        base.asyncInit_ = hasAsyncInit<C>;
+        base.asyncStart_ = hasAsyncStart<C>;
         components_.push_back(&base);
         dependencies_.emplace_back();
     }
@@ -1027,7 +1048,10 @@ struct ComponentListCheck {
                   "keel: keel::Provides<I> is listed twice in keel::Component<...>, which lists only what the "
                   "component needs. Inherit keel::Provides<I> instead, once: class C : public "
                   "keel::Component<...>, public keel::Provides<I>, public I");
-    static_assert(Base::uniqueMarkers, "keel: keel::AsyncInit or keel::AsyncStart is listed twice in keel::Component<...>");
+    static_assert(Base::uniqueListedAsync,
+                  "keel: keel::AsyncInit or keel::AsyncStart is listed twice in keel::Component<...>, which lists "
+                  "only dependencies. Inherit it instead, once: class C : public keel::Component<...>, public "
+                  "keel::AsyncInit");
 };
 
 template <class Component, class Dependency>
@@ -1243,7 +1267,8 @@ struct InvalidDependency {
     static_assert(validEntry<Component, Entry>,
                   "keel: the Component in InvalidDependency<Component, Entry> lists Entry (T, keel::Optional<T>, "
                   "keel::InitAfter<T> or keel::All<T>), and T can never be a component or an interface: T must be "
-                  "a class type, not a reference, not const/volatile, and not itself keel::Optional, keel::InitAfter, keel::Provides, keel::Alternative or keel::All");
+                  "a class type, not a reference, not const/volatile, and not itself keel::Optional, "
+                  "keel::InitAfter, keel::Provides, keel::Alternative or keel::All");
 };
 
 template <class Component, class Entry>
@@ -1252,8 +1277,19 @@ template <class Component, class Entry>
 struct MisplacedAsync {
     static_assert(asyncMarkerOnItsOwn<Component, Entry>,
                   "keel: the Component in MisplacedAsync<Component, Entry> lists keel::AsyncInit or "
-                  "keel::AsyncStart inside Entry. They aren't dependencies: list them on their own, as in "
-                  "keel::Component<Config, keel::AsyncInit>");
+                  "keel::AsyncStart inside Entry. They aren't dependencies but base classes: class C : public "
+                  "keel::Component<Config>, public keel::AsyncInit");
+};
+
+template <class Component, class Marker>
+inline constexpr bool asyncNotListed = false;  // only read when the check fails
+template <class Component, class Marker>
+struct AsyncAsDependency {
+    static_assert(asyncNotListed<Component, Marker>,
+                  "keel: the Component in AsyncAsDependency<Component, Marker> lists the Marker (keel::AsyncInit or "
+                  "keel::AsyncStart) in its keel::Component<...>, which lists only dependencies. Inherit it "
+                  "instead, next to keel::Component<...>: class Component : public keel::Component<...>, public "
+                  "Marker");
 };
 
 template <class Component, class Bundle>
@@ -1622,8 +1658,8 @@ struct Composition<TypeList<Cs...>> {
         using T = typename Split<Entry>::target;
         constexpr Use use = Split<Entry>::use;
         constexpr bool collection = use == Use::all || use == Use::optionalAll;
-        if constexpr (use == Use::async) {
-            return Outcome<Passed<C, Entry>>{};
+        if constexpr (use == Use::listedAsync) {
+            return Outcome<AsyncAsDependency<C, T>>{};
         } else if constexpr (use == Use::listedProvides) {
             return Outcome<ProvidesAsDependency<C, T>>{};
         } else if constexpr (use == Use::listedAlternative) {
@@ -1778,6 +1814,23 @@ inline constexpr bool abstractComponent = false;
 template <class T>
 inline constexpr bool abstractComponent<T, true> = std::is_abstract_v<T>;
 
+template <class T>
+inline constexpr bool accessibleAsync = false;
+template <class T>
+struct InaccessibleAsync {
+    static_assert(accessibleAsync<T>,
+                  "keel: the T in InaccessibleAsync<T> derives from keel::AsyncInit or keel::AsyncStart privately, "
+                  "protectedly or more than once, so keel can't see it. Derive from it publicly, once: class C : "
+                  "public keel::Component<...>, public keel::AsyncInit");
+};
+
+// Only read for a component (a complete class).
+template <class T, bool component = derivesFromComponent<T>>
+inline constexpr bool inaccessibleAsync = false;
+template <class T>
+inline constexpr bool inaccessibleAsync<T, true> = (std::is_base_of_v<AsyncInit, T> && !hasAsyncInit<T>) ||
+                                                   (std::is_base_of_v<AsyncStart, T> && !hasAsyncStart<T>);
+
 // Only read for a component (a complete class).
 template <class T, bool component = derivesFromComponent<T>>
 inline constexpr bool inaccessibleConditional = false;
@@ -1803,9 +1856,11 @@ struct ListInfo {
         earlier<I> == 1, DuplicateComponent<C>,
         std::conditional_t<
             earlier<I> == 0 && !derivesFromComponent<C>, NotAComponent<C>,
-            std::conditional_t<earlier<I> == 0 && inaccessibleConditional<C>, InaccessibleConditional<C>,
-                               std::conditional_t<earlier<I> == 0 && abstractComponent<C>, AbstractComponent<C>,
-                                                  Passed<C, std::integral_constant<std::size_t, I>>>>>>;
+            std::conditional_t<
+                earlier<I> == 0 && inaccessibleConditional<C>, InaccessibleConditional<C>,
+                std::conditional_t<earlier<I> == 0 && inaccessibleAsync<C>, InaccessibleAsync<C>,
+                                   std::conditional_t<earlier<I> == 0 && abstractComponent<C>, AbstractComponent<C>,
+                                                      Passed<C, std::integral_constant<std::size_t, I>>>>>>>;
 };
 
 // Each check is written once, as an outcome type; each group of checks has a struct that
@@ -1903,9 +1958,10 @@ constexpr std::string_view typeName() noexcept {
 // ===========================================================================
 // keel::Component
 
-/// Base class of every component. List the components and interfaces it uses (and the
-/// keel::AsyncInit and keel::AsyncStart markers); the interfaces it implements are base
-/// classes (keel::Provides<I>, keel::Alternative<I>):
+/// Base class of every component. List the components and interfaces it uses: T,
+/// keel::Optional<T>, keel::InitAfter<T>, keel::All<I>, keel::Optional<keel::All<I>>. Only
+/// dependencies; what the component is goes in its other base classes (keel::Provides<I>,
+/// keel::Alternative<I>, keel::Conditional, keel::AsyncInit, keel::AsyncStart):
 ///   class Exporter : public keel::Component<Aggregator, Logger, keel::Optional<Metrics>,
 ///                                           keel::InitAfter<Migrations>, keel::All<Format>>,
 ///                    public keel::Provides<Sink>,
@@ -1935,13 +1991,11 @@ public:
     static constexpr bool uniqueDependencies = detail::UniqueList<DeclaredDependencies>::value;
     static constexpr bool uniqueListedProvides = detail::UniqueList<ListedProvides>::value;
     static constexpr bool uniqueListedAlternatives = detail::UniqueList<ListedAlternatives>::value;
-    // keel::AsyncInit, keel::AsyncStart: init() / start() on a thread of its own.
-    static constexpr bool asyncInit = (detail::Split<Dependencies>::asyncInit || ...);
-    static constexpr bool asyncStart = (detail::Split<Dependencies>::asyncStart || ...);
-    static constexpr bool uniqueMarkers = (0 + ... + (detail::Split<Dependencies>::asyncInit ? 1 : 0)) <= 1 &&
-                                          (0 + ... + (detail::Split<Dependencies>::asyncStart ? 1 : 0)) <= 1;
+    // keel::AsyncInit and keel::AsyncStart are base classes: listed, they are AsyncAsDependency.
+    using ListedAsync = detail::Concat<typename detail::Split<Dependencies>::listedAsync...>;
+    static constexpr bool uniqueListedAsync = detail::UniqueList<ListedAsync>::value;
     static constexpr bool uniqueEntries =
-        uniqueDependencies && uniqueListedProvides && uniqueListedAlternatives && uniqueMarkers;
+        uniqueDependencies && uniqueListedProvides && uniqueListedAlternatives && uniqueListedAsync;
 
 private:
     // The accessor asserts on T run unless the list has a mistake that is the one error
@@ -1950,10 +2004,11 @@ private:
     template <class T>
     static constexpr bool checkedAccess = uniqueDependencies && !detail::contains<T, MisnestedDependencies>;
     // A lookup of keel::AsyncInit or keel::AsyncStart is an error, unless the list names it
-    // inside another marker (Optional<AsyncInit>): MisplacedAsync, at compose time, is then
-    // the one error.
+    // (AsyncAsDependency, or MisplacedAsync inside another entry), which is then the one
+    // error, at compose time.
     template <class T>
-    static constexpr bool markerAccess = detail::contains<T, DeclaredDependencies>;
+    static constexpr bool markerAccess =
+        detail::contains<T, DeclaredDependencies> || detail::contains<T, ListedAsync>;
 
 public:
 
@@ -1972,8 +2027,9 @@ protected:
     T& getComponent() const {
         // At most one of these fails, and none if the list itself is wrong (checkedAccess).
         if constexpr (detail::isAsyncMarker<T>) {
-            static_assert(markerAccess<T>, "keel: keel::AsyncInit and keel::AsyncStart are markers, not dependencies: "
-                                           "there is no component to get");
+            static_assert(markerAccess<T>,
+                          "keel: keel::AsyncInit and keel::AsyncStart are base classes, not dependencies: there is no "
+                          "component to get");
         } else if constexpr (checkedAccess<T>) {
             static_assert(!detail::contains<T, OptionalDependencies>,
                           "keel: T is declared keel::Optional<T>; use findComponent<T>(), which may return nullptr");
@@ -1995,8 +2051,9 @@ protected:
     template <class T>
     T* findComponent() const {
         if constexpr (detail::isAsyncMarker<T>) {  // as in getComponent()
-            static_assert(markerAccess<T>, "keel: keel::AsyncInit and keel::AsyncStart are markers, not dependencies: "
-                                           "there is no component to find");
+            static_assert(markerAccess<T>,
+                          "keel: keel::AsyncInit and keel::AsyncStart are base classes, not dependencies: there is no "
+                          "component to find");
         } else if constexpr (checkedAccess<T>) {
             static_assert(!detail::contains<T, RequiredDependencies>,
                           "keel: T is a required dependency; use getComponent<T>(), which never returns nullptr");
@@ -2023,8 +2080,9 @@ protected:
     template <class I>
     std::vector<I*> getAll() const {
         if constexpr (detail::isAsyncMarker<I>) {  // as in getComponent()
-            static_assert(markerAccess<I>, "keel: keel::AsyncInit and keel::AsyncStart are markers, not dependencies: "
-                                           "there are no components to get");
+            static_assert(markerAccess<I>,
+                          "keel: keel::AsyncInit and keel::AsyncStart are base classes, not dependencies: there are no "
+                          "components to get");
         } else if constexpr (checkedAccess<I>) {
             static_assert(!detail::contains<I, RequiredDependencies>,
                           "keel: I is a required dependency (one provider); use getComponent<I>(), or replace it "
@@ -2222,7 +2280,7 @@ public:
     /// own (see there); init() returns or throws after they all finished.
     void init() { registry_.init(); }
     /// setAsync(false) runs every component on the calling thread, in init order, as if
-    /// none listed keel::AsyncInit or keel::AsyncStart: to debug, to reproduce a run, or to
+    /// none derived from keel::AsyncInit or keel::AsyncStart: to debug, to reproduce a run, or to
     /// narrow down a race. Call it before init() (after, it throws keel::Error). Default true.
     void setAsync(bool async) { registry_.setAsync(async); }
     /// Calls start() on every enabled component, in dependency order. Requires a successful
@@ -2315,7 +2373,7 @@ public:
     /// The dependency graph in Graphviz DOT format, to render with Graphviz:
     ///   std::ofstream("graph.dot") << app.toDot();   // then: dot -Tsvg graph.dot -o graph.svg
     /// One box per component, in init order, with the interfaces it provides ("provides I",
-    /// "alternative I") and its markers ("async init", "async start"). Only the interfaces some
+    /// "alternative I") and its async base classes ("async init", "async start"). Only the interfaces some
     /// component of the App refers to are shown (keel::Provides<I> is a base class, and C++20
     /// can't list a class's bases). An arrow goes from a component to each component it is
     /// ordered after because of one entry of its list: plain for a required dependency, dashed
@@ -2470,7 +2528,7 @@ private:
 
     template <class... Sorted>
     static constexpr bool anyAsync(TypeList<Sorted...>) noexcept {
-        return ((ComponentOf<Sorted>::asyncInit || ComponentOf<Sorted>::asyncStart) || ...);
+        return ((hasAsyncInit<Sorted> || hasAsyncStart<Sorted>) || ...);
     }
     // The ordering edges of the graph the init order comes from, by init position: what the
     // async scheduler waits for. A component's dependencies all come before it.
@@ -2501,8 +2559,8 @@ private:
         out += concat({"  n", std::to_string(i), " [label=\""});
         appendDotEscaped(out, typeName<C>());
         out += interfaces;
-        if constexpr (ComponentOf<C>::asyncInit) out += "\\nasync init";
-        if constexpr (ComponentOf<C>::asyncStart) out += "\\nasync start";
+        if constexpr (hasAsyncInit<C>) out += "\\nasync init";
+        if constexpr (hasAsyncStart<C>) out += "\\nasync start";
         out += disabled ? "\\n(disabled)\", color=gray, fontcolor=gray];\n" : "\"];\n";
     }
     // Appends "provides T" (or "alternative T") to the label of each provider of T.
@@ -2553,7 +2611,7 @@ private:
             case Use::listedProvides:  // no edges
             case Use::listedAlternative:
             case Use::misnested:
-            case Use::async:
+            case Use::listedAsync:
                 return "";
         }
         return "";

@@ -1,4 +1,4 @@
-// Must not compile: Database lists keel::AsyncInit twice.
+// Must not compile: Database lists keel::AsyncInit twice (once would be AsyncAsDependency).
 #include <keel.hpp>
 
 class Config : public keel::Component<> {};

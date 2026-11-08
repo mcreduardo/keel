@@ -11,14 +11,12 @@ show up in compile errors, not in your code.
 
 | | |
 |---|---|
-| `keel::Component<Entries...>` | Base class. Each entry is one of the rows below: what the component needs, plus the `AsyncInit` and `AsyncStart` markers. |
+| `keel::Component<Entries...>` | Base class. Each entry is one of the rows below: a dependency, and nothing else. |
 | `T` | required dependency |
 | `keel::Optional<T>` | optional dependency |
 | `keel::InitAfter<T>` | ordering only |
 | `keel::All<I>` | every provider of `I`, at least one |
 | `keel::Optional<keel::All<I>>` | every provider of `I`, possibly none |
-| `keel::AsyncInit` | `init()` (and a `keel::Conditional`'s `enabled()`) on a thread of their own |
-| `keel::AsyncStart` | `start()` on a thread of its own |
 
 What a component is goes in its other base classes:
 
@@ -27,6 +25,8 @@ What a component is goes in its other base classes:
 | `public keel::Provides<I>` | implements the interface `I` (derive from `I` publicly too); one per interface. Checked only for an `I` something refers to |
 | `public keel::Alternative<I>` | implements `I`, one of several chosen at runtime (derive from `I` and `keel::Conditional` too). Checked like `Provides<I>`, except that it must always be a `keel::Conditional` |
 | `public keel::Conditional` | configuration may turn it off (`bool enabled() const`) |
+| `public keel::AsyncInit` | `init()` (and a `keel::Conditional`'s `enabled()`) on a thread of their own |
+| `public keel::AsyncStart` | `start()` on a thread of its own |
 
 The listed types may be incomplete in the component's header. Details:
 [Dependencies and interfaces](dependencies.md), [Async startup](async.md).
@@ -113,7 +113,7 @@ Details: [Lifecycle](lifecycle.md), [Inspecting and testing](inspection-and-test
   exception unchanged. `stop()` and `deinit()` can't throw.
 - `getAll<I>()` lists the enabled providers in init order; it is never empty for `All<I>`
   (some provider isn't conditional).
-- Everything runs on the calling thread unless a component lists `AsyncInit` or
+- Everything runs on the calling thread unless a component derives from `AsyncInit` or
   `AsyncStart`. Then components with no dependency path between them may run at the same
   time, and `stop()`/`deinit()` still run on the calling thread.
 - No RTTI. A type's identity is the address of a per-type variable; lookups go through a
