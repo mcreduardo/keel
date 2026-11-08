@@ -28,15 +28,18 @@ add_test(NAME keel_tests COMMAND keel_tests)
 # The async tests wait for each other with timeouts of 5 s; a hang must not stall ctest.
 set_tests_properties(keel_tests PROPERTIES TIMEOUT 120)
 
-# Its own executable: it replaces the global operator new to count allocations.
-add_executable(keel_alloc_tests main.cpp alloc_test.cpp)
-target_link_libraries(keel_alloc_tests PRIVATE keel::keel)
-if(MSVC)
-    target_compile_options(keel_alloc_tests PRIVATE /W4 /permissive-)
-else()
-    target_compile_options(keel_alloc_tests PRIVATE -Wall -Wextra -Wpedantic)
+# Its own executable: it replaces the global operator new to count allocations. Not built
+# with ThreadSanitizer, whose runtime defines operator new too (the link fails).
+if(NOT CMAKE_CXX_FLAGS MATCHES "-fsanitize=thread")
+    add_executable(keel_alloc_tests main.cpp alloc_test.cpp)
+    target_link_libraries(keel_alloc_tests PRIVATE keel::keel)
+    if(MSVC)
+        target_compile_options(keel_alloc_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(keel_alloc_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME keel_alloc_tests COMMAND keel_alloc_tests)
 endif()
-add_test(NAME keel_alloc_tests COMMAND keel_alloc_tests)
 
 # keel.hpp is generated from the development headers in include/keel/ (tools/amalgamate.py).
 # This test builds against those headers, so that they keep compiling on their own;

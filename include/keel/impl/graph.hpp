@@ -227,6 +227,23 @@ struct ProviderFailuresOf<TypeList<Failures...>> {
     using type = ProviderFailures<Failures...>;
 };
 
+// The types of a list whose entry in Keep is true, and the types of a list in the order of
+// Index. Class templates at namespace scope rather than member functions of Composition:
+// MSVC doesn't expand a pack inside a member function's return type there.
+template <class List, auto Keep, class Sequence>
+struct KeepIf;
+template <class... Ts, auto Keep, std::size_t... Is>
+struct KeepIf<TypeList<Ts...>, Keep, std::index_sequence<Is...>> {
+    using type = Concat<std::conditional_t<Keep[Is], TypeList<Ts>, TypeList<>>...>;
+};
+
+template <class List, auto Index, class Sequence>
+struct Reorder;
+template <class... Ts, auto Index, std::size_t... Is>
+struct Reorder<TypeList<Ts...>, Index, std::index_sequence<Is...>> {
+    using type = TypeList<std::tuple_element_t<Index[Is], std::tuple<Ts...>>...>;
+};
+
 template <class List>
 struct Composition;
 
@@ -459,14 +476,9 @@ struct Composition<TypeList<Cs...>> {
     static constexpr bool acyclic = order.count == size;
     static constexpr Row onCycle = acyclic ? Row{} : componentsOnCycles(graph, order.placed);
 
-    template <std::size_t... Is>
-    static auto cycleOf(std::index_sequence<Is...>)
-        -> Concat<std::conditional_t<onCycle[Is], TypeList<At<Is>>, TypeList<>>...>;
-    using Cycle = decltype(cycleOf(std::make_index_sequence<size>{}));
-
-    template <std::size_t... Is>
-    static auto sortedOf(std::index_sequence<Is...>) -> TypeList<At<order.index[Is]>...>;
-    using Sorted = std::conditional_t<acyclic, decltype(sortedOf(std::make_index_sequence<size>{})), TypeList<Cs...>>;
+    using Cycle = typename KeepIf<TypeList<Cs...>, onCycle, std::make_index_sequence<size>>::type;
+    using Sorted = std::conditional_t<
+        acyclic, typename Reorder<TypeList<Cs...>, order.index, std::make_index_sequence<size>>::type, TypeList<Cs...>>;
 };
 
 }  // namespace detail

@@ -17,6 +17,7 @@
 
 #include <array>
 #include <cstddef>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -102,11 +103,14 @@ struct ListInfo {
     static constexpr std::size_t size = sizeof...(Cs);
     static constexpr std::array<TypeId, size> ids{typeId<Cs>()...};
 
-    // How many times the I-th type appears earlier in the list.
+    // How many times the I-th type appears earlier in the list. Compares the types, not
+    // their ids: GCC 11 doesn't compare addresses of different objects at compile time.
     template <std::size_t I>
     static constexpr std::size_t earlier = [] {
+        using T = std::tuple_element_t<I, std::tuple<Cs...>>;
+        constexpr bool same[] = {std::is_same_v<Cs, T>...};
         std::size_t n = 0;
-        for (std::size_t j = 0; j < I; ++j) n += ids[j] == ids[I] ? 1 : 0;
+        for (std::size_t j = 0; j < I; ++j) n += same[j] ? 1 : 0;
         return n;
     }();
 
