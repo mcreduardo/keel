@@ -132,7 +132,8 @@ TEST(get_all_allocates_only_its_result) {
     app.init();
     const Server& server = app.getComponent<Server>();
     std::size_t found = 0;
-    // MSVC's debug standard library also allocates a bookkeeping object for each vector.
+    // MSVC's debug standard library also allocates a bookkeeping object for each vector,
+    // even an empty one.
 #if defined(_MSC_VER) && defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL > 0
     constexpr std::size_t perVector = 2;
 #else
@@ -144,5 +145,5 @@ TEST(get_all_allocates_only_its_result) {
     CHECK(found == 2 * rounds);
     CHECK(allocationsOf([&] {
               for (int i = 0; i < rounds; ++i) found += server.plugins();
-          }) == 0);  // no provider: an empty vector
+          }) == (perVector - 1) * rounds);  // no provider: an empty vector
 }
