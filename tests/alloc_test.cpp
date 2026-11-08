@@ -132,9 +132,15 @@ TEST(get_all_allocates_only_its_result) {
     app.init();
     const Server& server = app.getComponent<Server>();
     std::size_t found = 0;
+    // MSVC's debug standard library also allocates a bookkeeping object for each vector.
+#if defined(_MSC_VER) && defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL > 0
+    constexpr std::size_t perVector = 2;
+#else
+    constexpr std::size_t perVector = 1;
+#endif
     CHECK(allocationsOf([&] {
               for (int i = 0; i < rounds; ++i) found += server.checks();
-          }) == rounds);  // one vector each
+          }) == perVector * rounds);  // one vector each
     CHECK(found == 2 * rounds);
     CHECK(allocationsOf([&] {
               for (int i = 0; i < rounds; ++i) found += server.plugins();

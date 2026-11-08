@@ -181,6 +181,9 @@ top; the CMake build compiles all of them and runs them as tests.
 - MSVC's default constexpr step limit is about ten times lower than Clang's, so large
   compositions (around a hundred components or more) will likely need
   `/constexpr:steps1000000` there. More in [platform notes](docs/reference.md#requirements-and-platform-notes).
+- On MSVC, keel's compile errors name the mistake and the component, but some of the types
+  in them appear as internal aliases (`MissingDependency<Server, ...::check::T>` where GCC
+  and Clang show `MissingDependency<Server, Logger>`).
 
 ## Using keel
 

@@ -21,6 +21,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
@@ -214,10 +215,18 @@ C construct(Args&... args) {
     }
 }
 
+// compose()'s arguments, passed to every Slot as one object: GCC 11 rejects expanding the
+// arguments inside the expansion over the slots (Slot<Sorted>(args...)...).
+template <class... Args>
+struct Arguments {
+    std::tuple<Args&...> refs;
+};
+
 template <class C>
 struct Slot {
     template <class... Args>
-    explicit Slot(Args&... args) : component(construct<C>(args...)) {}
+    explicit Slot(const Arguments<Args...>& arguments)
+        : component(std::apply([](Args&... args) { return construct<C>(args...); }, arguments.refs)) {}
     C component;
 };
 
@@ -227,7 +236,9 @@ template <class... Sorted>
 struct Storage<TypeList<Sorted...>> : Slot<Sorted>... {
     // Bases are constructed in dependency order and destroyed in reverse.
     template <class... Args>
-    explicit Storage(Args&... args) : Slot<Sorted>(args...)... {}
+    explicit Storage(Args&... args) : Storage(Arguments<Args...>{{args...}}) {}
+    template <class... Args>
+    explicit Storage(const Arguments<Args...>& arguments) : Slot<Sorted>(arguments)... {}
 
     template <class T>
     T& get() noexcept {

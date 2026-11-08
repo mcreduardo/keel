@@ -418,3 +418,9 @@
   dependency edge, so it belongs in the `Component<...>` list; as a base class, an
   `After<I>` on an interface nothing else refers to would be dropped silently. Alternative:
   `OrderAfter<T>` or `Before<T>` on the other side. Revisitable before 0.1.0.
+
+- **MSVC shows some types in keel's errors as internal aliases.** `MissingDependency<Server,
+  ...::check::T>` where GCC and Clang show `MissingDependency<Server, Logger>`: MSVC prints
+  the alias a diagnostic was instantiated through, not the type. On MSVC the compile-fail
+  tests check only the diagnostic's name (tests/compile_fail.cmake). To try: instantiate
+  each diagnostic with the concrete types rather than through an alias.
