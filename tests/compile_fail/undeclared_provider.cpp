@@ -1,5 +1,5 @@
 // Must not compile: Server needs a Metrics, and PrometheusMetrics derives from Metrics but
-// doesn't list keel::Provides<Metrics>.
+// doesn't derive from keel::Provides<Metrics>.
 #include <keel.hpp>
 
 struct Metrics {

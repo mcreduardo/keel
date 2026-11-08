@@ -140,7 +140,7 @@ class Room : public keel::Component<Lamp> {};  // may require it
 struct Sink {
     virtual ~Sink() = default;
 };
-class FileSink : public keel::Component<keel::Provides<Sink>>, public Sink, public keel::Conditional {
+class FileSink : public keel::Component<>, public keel::Provides<Sink>, public Sink, public keel::Conditional {
     bool enabled() const override { return false; }
 };
 class Writer : public keel::Component<Sink> {};
@@ -250,7 +250,7 @@ struct HealthCheck {
 };
 
 template <bool on, int id = 0>
-class Check : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck, public keel::Conditional {
+class Check : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck, public keel::Conditional {
 public:
     std::string name() const override { return on ? "on" : "off"; }
 
@@ -258,7 +258,7 @@ private:
     bool enabled() const override { return on; }
 };
 
-class Always : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck {
+class Always : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck {
 public:
     std::string name() const override { return "always"; }
 };

@@ -6,7 +6,7 @@ struct HealthCheck {
     virtual ~HealthCheck() = default;
 };
 
-class Database : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck {};
+class Database : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck {};
 class Cache : public keel::Component<>, public HealthCheck {};
 
 class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {};

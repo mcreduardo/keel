@@ -6,10 +6,10 @@ struct Shell {
     virtual int serve() = 0;
 };
 
-class Terminal : public keel::Component<keel::Provides<Shell>>, public Shell {
+class Terminal : public keel::Component<>, public keel::Provides<Shell>, public Shell {
     int serve() override { return 0; }
 };
-class Console : public keel::Component<keel::Provides<Shell>>, public Shell {
+class Console : public keel::Component<>, public keel::Provides<Shell>, public Shell {
     int serve() override { return 0; }
 };
 

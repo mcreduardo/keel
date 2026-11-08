@@ -5,7 +5,7 @@
 struct I {
     virtual ~I() = default;
 };
-class C : public keel::Component<I, keel::Provides<I>>, public I {};
+class C : public keel::Component<I>, public keel::Provides<I>, public I {};
 class Client : public keel::Component<C> {};
 
 static_assert(!keel::isValid<Client, C>, "isValid disagrees with compose");

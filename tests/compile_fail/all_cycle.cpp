@@ -6,7 +6,7 @@ struct HealthCheck {
 };
 
 class HealthEndpoint;
-class Database : public keel::Component<HealthEndpoint, keel::Provides<HealthCheck>>, public HealthCheck {};
+class Database : public keel::Component<HealthEndpoint>, public keel::Provides<HealthCheck>, public HealthCheck {};
 class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {};
 
 static_assert(!keel::isValid<HealthEndpoint, Database>, "isValid disagrees with compose");

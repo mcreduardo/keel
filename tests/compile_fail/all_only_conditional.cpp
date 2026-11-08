@@ -6,10 +6,10 @@ struct HealthCheck {
     virtual ~HealthCheck() = default;
 };
 
-class DiskCheck : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck, public keel::Conditional {
+class DiskCheck : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck, public keel::Conditional {
     bool enabled() const override { return true; }
 };
-class NetCheck : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck, public keel::Conditional {
+class NetCheck : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck, public keel::Conditional {
     bool enabled() const override { return true; }
 };
 

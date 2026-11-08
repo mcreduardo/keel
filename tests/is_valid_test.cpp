@@ -41,21 +41,33 @@ static_assert(!keel::isValid<Config, Logger, Config>);
 
 // A duplicate in a component's own list (reported by its constructor).
 class TwiceLogger : public keel::Component<Logger, keel::Optional<Logger>> {};
-class TwiceProvides : public keel::Component<keel::Provides<Storage>, keel::Alternative<Storage>>, public Storage {};
+class TwiceListedProvides : public keel::Component<keel::Provides<Storage>, keel::Provides<Storage>>, public Storage {};
 static_assert(!keel::isValid<Config, Logger, TwiceLogger>);
-static_assert(!keel::isValid<TwiceProvides>);
+static_assert(!keel::isValid<TwiceListedProvides>);
+
+// keel::Provides<I> is a base class: listed, it is an error; next to keel::Alternative<I> too.
+class ListedProvides : public keel::Component<keel::Provides<Storage>>, public Storage {};
+class ProvidesAndAlternative : public keel::Component<keel::Alternative<Storage>>, public keel::Provides<Storage>,
+                               public Storage {};
+static_assert(!keel::isValid<ListedProvides>);
+static_assert(!keel::isValid<ProvidesAndAlternative>);
 
 // Missing dependency.
 static_assert(!keel::isValid<Logger, Server>);
 static_assert(!keel::isValid<Server>);
 
 // Interfaces: missing, ambiguous, mixed, not derived, undeclared provider or subclass.
-class DiskStorage : public keel::Component<keel::Provides<Storage>>, public Storage {};
-class MemoryStorage : public keel::Component<keel::Provides<Storage>>, public Storage {};
+class DiskStorage : public keel::Component<>, public keel::Provides<Storage>, public Storage {};
+class MemoryStorage : public keel::Component<>, public keel::Provides<Storage>, public Storage {};
 class UsesStorage : public keel::Component<Storage> {};
 class MaybeStorage : public keel::Component<keel::Optional<Storage>> {};
 class AfterStorage : public keel::Component<keel::InitAfter<Storage>> {};
-class NotStorage : public keel::Component<keel::Provides<Storage>> {};
+class NotStorage : public keel::Component<>, public keel::Provides<Storage> {};
+struct StorageReader : Storage {};
+struct StorageWriter : Storage {};
+class AmbiguousDisk : public keel::Component<>, public keel::Provides<Storage>, public StorageReader,
+                      public StorageWriter {};  // a Storage& to it would be ambiguous
+class PrivateStorage : public keel::Component<>, keel::Provides<Storage>, public Storage {};
 class UndeclaredStorage : public keel::Component<>, public Storage {};
 
 static_assert(keel::isValid<UsesStorage, DiskStorage>);
@@ -65,7 +77,16 @@ static_assert(keel::isValid<DiskStorage, MemoryStorage>);                // noth
 static_assert(!keel::isValid<UsesStorage>);
 static_assert(!keel::isValid<UsesStorage, DiskStorage, MemoryStorage>);
 static_assert(!keel::isValid<MaybeStorage, DiskStorage, MemoryStorage>);
-static_assert(!keel::isValid<NotStorage>);
+static_assert(!keel::isValid<UsesStorage, NotStorage>);
+static_assert(!keel::isValid<AfterStorage, NotStorage>);
+static_assert(!keel::isValid<UsesStorage, AmbiguousDisk>);
+static_assert(!keel::isValid<UsesStorage, PrivateStorage>);
+static_assert(!keel::isValid<MaybeStorage, PrivateStorage>);
+static_assert(!keel::isValid<UsesStorage, DiskStorage, PrivateStorage>);
+// keel asks the components only about the types something refers to (C++20 can't list a
+// class's bases): a keel::Provides<Storage> that nothing needs isn't checked.
+static_assert(keel::isValid<NotStorage>);
+static_assert(keel::isValid<PrivateStorage>);
 static_assert(!keel::isValid<UsesStorage, UndeclaredStorage>);
 static_assert(!keel::isValid<MaybeStorage, UndeclaredStorage>);
 static_assert(!keel::isValid<AfterStorage, UndeclaredStorage>);
@@ -73,7 +94,7 @@ static_assert(!keel::isValid<AfterStorage, UndeclaredStorage>);
 class Clock : public keel::Component<> {};
 class FakeClock : public Clock {};
 class UsesClock : public keel::Component<Clock> {};
-class SelfProvidingClock : public keel::Component<keel::Provides<SelfProvidingClock>> {};
+class SelfProvidingClock : public keel::Component<>, public keel::Provides<SelfProvidingClock> {};
 class FakeSelfProvidingClock : public SelfProvidingClock {};
 class UsesSelfProvidingClock : public keel::Component<SelfProvidingClock> {};
 static_assert(!keel::isValid<UsesClock, FakeClock>);
@@ -85,7 +106,7 @@ class RedisCache : public keel::Component<keel::Alternative<Cache>>, public Cach
 class MemoryCache : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
     bool enabled() const override { return false; }
 };
-class PlainCache : public keel::Component<keel::Provides<Cache>>, public Cache {};
+class PlainCache : public keel::Component<>, public keel::Provides<Cache>, public Cache {};
 class UsesCache : public keel::Component<Cache> {};
 class MaybeCache : public keel::Component<keel::Optional<Cache>> {};
 class AnyCaches : public keel::Component<keel::Optional<keel::All<Cache>>> {};
@@ -110,7 +131,7 @@ class AfterUplink : public keel::Component<keel::InitAfter<Uplink>> {};
 class ConditionalNeedsUplink : public keel::Component<Uplink>, public keel::Conditional {
     bool enabled() const override { return true; }
 };
-class ConditionalDisk : public keel::Component<keel::Provides<Storage>>, public Storage, public keel::Conditional {
+class ConditionalDisk : public keel::Component<>, public keel::Provides<Storage>, public Storage, public keel::Conditional {
     bool enabled() const override { return true; }
 };
 class PrivateConditional : public keel::Component<>, keel::Conditional {
@@ -150,7 +171,7 @@ static_assert(keel::isValid<MaybeFeature, Feature, Config>);
 struct Light : public keel::Conditional {
     virtual ~Light() = default;
 };
-class Lamp : public keel::Component<keel::Provides<Light>>, public Light {
+class Lamp : public keel::Component<>, public keel::Provides<Light>, public Light {
     bool enabled() const override { return true; }
 };
 class UsesLight : public keel::Component<Light> {};
@@ -166,15 +187,18 @@ static_assert(keel::isValid<Uplinks, MaybeUplink>);
 // Invalid entries.
 class ConstOptional : public keel::Component<keel::Optional<const Config>> {};
 class NestedOptional : public keel::Component<keel::Optional<keel::Optional<Config>>> {};
-class ConstProvides : public keel::Component<keel::Provides<const Storage>>, public Storage {};
 static_assert(!keel::isValid<Config, ConstOptional>);
+// keel::Provides<const Storage> (or any I no dependency could name) is rejected where the
+// component is constructed (tests/compile_fail/invalid_provides.cpp). isValid doesn't see
+// construction, nor an I nothing refers to, so it says true.
+class ConstProvides : public keel::Component<>, public keel::Provides<const Storage>, public Storage {};
+static_assert(keel::isValid<ConstProvides>);
 static_assert(!keel::isValid<Config, NestedOptional>);
-static_assert(!keel::isValid<ConstProvides>);
 
 // Collections.
-class DatabaseCheck : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck {};
+class DatabaseCheck : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck {};
 class LeftOutCheck : public keel::Component<>, public HealthCheck {};
-class ConditionalCheck : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck, public keel::Conditional {
+class ConditionalCheck : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck, public keel::Conditional {
     bool enabled() const override { return true; }
 };
 class AllChecks : public keel::Component<keel::All<HealthCheck>> {};
@@ -190,7 +214,7 @@ static_assert(keel::isValid<AllChecks, ConditionalCheck, DatabaseCheck>);
 static_assert(keel::isValid<AnyChecks, ConditionalCheck>);
 // A composite that provides HealthCheck itself doesn't count for its own All<HealthCheck>:
 // the only other provider is conditional.
-class CompositeCheck : public keel::Component<keel::Provides<HealthCheck>, keel::All<HealthCheck>>,
+class CompositeCheck : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>,
                        public HealthCheck {};
 static_assert(!keel::isValid<CompositeCheck, ConditionalCheck>);
 static_assert(keel::isValid<CompositeCheck, ConditionalCheck, DatabaseCheck>);
@@ -218,11 +242,11 @@ class Raw : public keel::detail::ComponentBase {};
 static_assert(!keel::isValid<Raw>);
 
 // Members named like keel::Component's own don't confuse keel.
-class OwnNames : public keel::Component<Config, keel::Provides<Storage>>, public Storage {
+class OwnNames : public keel::Component<Config>, public keel::Provides<Storage>, public Storage {
 public:
     using Entries = int;
     using RequiredDependencies = keel::Bundle<>;
-    using ProvidedInterfaces = void;
+    using ListedProvides = void;
     using AlternativeInterfaces = void;
     [[maybe_unused]] static constexpr bool uniqueEntries = false;
 };

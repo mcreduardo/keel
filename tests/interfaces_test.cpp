@@ -24,7 +24,7 @@ struct HealthCheck {
 
 // Provides two interfaces. HealthCheck is its second interface base, so a HealthCheck*
 // to it differs from a pointer to the component: lookups must return the subobject.
-class DiskStorage : public keel::Component<keel::Provides<Storage>, keel::Provides<HealthCheck>>,
+class DiskStorage : public keel::Component<>, public keel::Provides<Storage>, public keel::Provides<HealthCheck>,
                     public Storage,
                     public HealthCheck {
 public:
@@ -39,7 +39,7 @@ private:
     void deinit() noexcept override { events.push_back("deinit DiskStorage"); }
 };
 
-class MemoryStorage : public keel::Component<keel::Provides<Storage>>, public Storage {
+class MemoryStorage : public keel::Component<>, public keel::Provides<Storage>, public Storage {
 public:
     std::string describe() const override { return "memory"; }
 
@@ -127,6 +127,9 @@ TEST(the_root_gets_an_interface_subobject_before_init) {
     CHECK(&check == static_cast<HealthCheck*>(&app.getComponent<DiskStorage>()));
     CHECK(static_cast<void*>(&check) != static_cast<void*>(&app.getComponent<DiskStorage>()));
     CHECK(check.healthy());
+    // After init() too, though no component refers to HealthCheck.
+    app.init();
+    CHECK(&app.getComponent<HealthCheck>() == &check);
 }
 
 TEST(an_optional_interface_gets_its_provider_or_nullptr) {
@@ -185,7 +188,7 @@ struct Shell {
     int banner() const { return 7; }  // not virtual: inherited by the provider
 };
 
-class Terminal : public keel::Component<keel::Provides<Shell>>, public Shell {
+class Terminal : public keel::Component<>, public keel::Provides<Shell>, public Shell {
 public:
     int serve() override { return 42; }
 };
@@ -212,7 +215,7 @@ TEST(keel_run_calls_an_interface_member) {
 
 namespace {
 
-class CachedStorage : public keel::Component<keel::Provides<HealthCheck>, keel::InitAfter<HealthCheck>>,
+class CachedStorage : public keel::Component<keel::InitAfter<HealthCheck>>, public keel::Provides<HealthCheck>,
                       public HealthCheck {
 public:
     bool healthy() const override { return true; }
@@ -235,7 +238,7 @@ TEST(init_after_its_own_interface_follows_the_other_providers) {
 
 namespace {
 
-class Clock : public keel::Component<keel::Provides<Clock>> {
+class Clock : public keel::Component<>, public keel::Provides<Clock> {
 public:
     virtual int now() const { return 1000; }
 };
@@ -296,27 +299,34 @@ class Part;
 template <int N>
 struct PartBase {
     using type = keel::Component<Part<N - 1>, Part<N - 2>, Part<N - 3>, keel::Optional<Part<N - 4>>,
-                                 keel::InitAfter<Node>, keel::Provides<Counted>>;
+                                 keel::InitAfter<Node>>;
 };
 template <>
 struct PartBase<0> {
-    using type = keel::Component<keel::Provides<Node>, keel::Provides<Counted>>;
+    using type = keel::Component<>;
 };
 template <>
 struct PartBase<1> {
-    using type = keel::Component<Part<0>, keel::InitAfter<Node>, keel::Provides<Counted>>;
+    using type = keel::Component<Part<0>, keel::InitAfter<Node>>;
 };
 template <>
 struct PartBase<2> {
-    using type = keel::Component<Part<1>, Part<0>, keel::InitAfter<Node>, keel::Provides<Counted>>;
+    using type = keel::Component<Part<1>, Part<0>, keel::InitAfter<Node>>;
 };
 template <>
 struct PartBase<3> {
-    using type = keel::Component<Part<2>, Part<1>, Part<0>, keel::InitAfter<Node>, keel::Provides<Counted>>;
+    using type = keel::Component<Part<2>, Part<1>, Part<0>, keel::InitAfter<Node>>;
 };
 
+// Part<0> alone provides Node.
 template <int N>
-class Part : public PartBase<N>::type, public Node, public Counted {
+struct NodeProvider {};
+template <>
+struct NodeProvider<0> : keel::Provides<Node> {};
+
+template <int N>
+class Part : public PartBase<N>::type, public NodeProvider<N>, public keel::Provides<Counted>, public Node,
+             public Counted {
 public:
     int number() const override { return N; }
 };

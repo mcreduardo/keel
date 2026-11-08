@@ -1,5 +1,5 @@
 // Must not compile: keel::Optional<Metrics> would never find PrometheusMetrics, which derives
-// from Metrics but doesn't list keel::Provides<Metrics>.
+// from Metrics but doesn't derive from keel::Provides<Metrics>.
 #include <keel.hpp>
 
 struct Metrics {

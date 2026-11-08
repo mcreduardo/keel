@@ -30,7 +30,7 @@ struct Cache {
 class RedisCache : public Cache { /* ... */ };   // plain classes, not components
 class MemoryCache : public Cache { /* ... */ };
 
-class CacheComponent : public keel::Component<Config, Logger, keel::Provides<Cache>>, public Cache {
+class CacheComponent : public keel::Component<Config, Logger>, public keel::Provides<Cache>, public Cache {
 public:
     bool get(std::string_view key, std::string& value) override { return impl_->get(key, value); }
 
@@ -90,7 +90,7 @@ auto app = keel::compose<Repository, RedisCache, MemoryCache, Network, Config>(a
 - **Compile time:** several providers of `Cache` are allowed because each is an
   `Alternative<Cache>`. An alternative that doesn't derive from `keel::Conditional` is an
   error (`AlternativeNotConditional`), and so is mixing alternatives with a plain
-  `Provides<Cache>` (`MixedProviders`) as soon as something needs one `Cache`.
+  `Provides<Cache>` base (`MixedProviders`) as soon as something needs one `Cache`.
 - **Runtime:** dependents of `Cache` are ordered after every alternative, so the choice is
   made before any of them initializes. When one does:
   - one alternative enabled: it gets that one;
@@ -148,7 +148,7 @@ and the compiler checks that they do:
 | `Optional<All<I>>` (Uplink provides `I`) | Uplink is left out of `getAll<I>()`, which may become empty |
 | `All<I>` | Uplink is left out of `getAll<I>()`; compiles only if some provider of `I` isn't conditional (`OnlyConditionalProviders`), so the list is never empty |
 | `Uplink` (required) | compile error: `RequiredConditional<Dashboard, Uplink>` |
-| `I`, provided only by Uplink (`Provides<I>`) | compile error: `RequiredConditionalProvider<Writer, I, Uplink>` |
+| `I`, provided only by Uplink (a `Provides<I>` base) | compile error: `RequiredConditionalProvider<Writer, I, Uplink>` |
 | `I`, provided by `Alternative<I>`s | the enabled one; checked at startup (see above) |
 
 This holds for a conditional dependent too: if `Recorder` were conditional, the
@@ -194,7 +194,7 @@ class NullUplink : public Uplink {
     void send(const Sample&) override {}  // drop
 };
 
-class UplinkComponent : public keel::Component<Config, Network, keel::Provides<Uplink>>, public Uplink {
+class UplinkComponent : public keel::Component<Config, Network>, public keel::Provides<Uplink>, public Uplink {
     void send(const Sample& sample) override { impl_->send(sample); }
     void init() override {
         if (getComponent<Config>().online()) {

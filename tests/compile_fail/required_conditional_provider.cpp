@@ -5,7 +5,7 @@ struct Sink {
     virtual ~Sink() = default;
 };
 
-class FileSink : public keel::Component<keel::Provides<Sink>>, public Sink, public keel::Conditional {
+class FileSink : public keel::Component<>, public keel::Provides<Sink>, public Sink, public keel::Conditional {
     bool enabled() const override { return true; }
 };
 

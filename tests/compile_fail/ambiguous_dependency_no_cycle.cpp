@@ -7,8 +7,8 @@ struct Storage {
 };
 
 class A;
-class B : public keel::Component<keel::Provides<Storage>>, public Storage {};
-class C : public keel::Component<A, keel::Provides<Storage>>, public Storage {};
+class B : public keel::Component<>, public keel::Provides<Storage>, public Storage {};
+class C : public keel::Component<A>, public keel::Provides<Storage>, public Storage {};
 class A : public keel::Component<Storage> {};
 
 static_assert(!keel::isValid<A, B, C>, "isValid disagrees with compose");

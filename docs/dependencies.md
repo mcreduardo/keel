@@ -2,18 +2,24 @@
 
 [keel](../README.md) › docs › Dependencies and interfaces
 
-Everything a component declares goes in its `keel::Component<...>` list:
+What a component **needs** goes in its `keel::Component<...>` list, along with
+`keel::Alternative<I>`, `keel::AsyncInit` and `keel::AsyncStart`. The interfaces it
+**implements** are base classes, `keel::Provides<I>`:
 
 | You write | Meaning | Access |
 |---|---|---|
 | `T` | **Required.** `T` must be composed; it comes first. | `getComponent<T>()` returns `T&` |
 | `keel::Optional<T>` | **Optional.** Used if composed; it comes first if so. | `findComponent<T>()` returns `T*`, `nullptr` if absent or disabled |
 | `keel::InitAfter<T>` | **Ordering only.** Come after `T` if `T` is composed. | none |
-| `keel::Provides<I>` | This component **implements the interface `I`**. | others can depend on `I` |
 | `keel::All<I>` | **Every** provider of `I`, **at least one**. | `getAll<I>()` returns `std::vector<I*>`, never empty |
 | `keel::Optional<keel::All<I>>` | Every provider of `I`, **possibly none**. | `getAll<I>()`, possibly empty |
 | `keel::Alternative<I>` | **One of several** implementations of `I`, chosen at runtime (with `keel::Conditional`). | others depend on plain `I`; see [Decisions at runtime](runtime-decisions.md#keelalternativei-implementations-that-are-components-of-their-own) |
 | `keel::AsyncInit`, `keel::AsyncStart` | Run this component's `init()` / `start()` on a thread of its own. | see [Async startup](async.md) |
+
+| You derive from | Meaning | Effect |
+|---|---|---|
+| `public keel::Provides<I>` | This component **implements the interface `I`**. | others can depend on `I` |
+| `public keel::Conditional` | Configuration may turn it off. | see [Decisions at runtime](runtime-decisions.md#keelconditional-a-component-that-may-be-off) |
 
 "Comes first" means constructed and initialized before this component, and deinitialized
 and destroyed after it.
@@ -81,8 +87,8 @@ interface `I`, `InitAfter<I>` comes after every provider of `I`.
 ## Interfaces: `keel::Provides<I>`
 
 A component can depend on an **interface** instead of a concrete class. The interface is
-a plain class, not a component. A component that implements it says so with
-`Provides<I>` and derives from it publicly:
+a plain class, not a component. A component that implements it derives publicly from
+`keel::Provides<I>` and from `I`:
 
 ```cpp
 struct Storage {  // the interface: plain C++
@@ -90,7 +96,7 @@ struct Storage {  // the interface: plain C++
     virtual void put(const std::string& key, const std::string& value) = 0;
 };
 
-class DiskStorage : public keel::Component<Config, keel::Provides<Storage>>, public Storage {
+class DiskStorage : public keel::Component<Config>, public keel::Provides<Storage>, public Storage {
 public:
     void put(const std::string& key, const std::string& value) override;
 };
@@ -110,9 +116,18 @@ auto app = keel::compose<Service, DiskStorage, Config>();
   [role interface](patterns.md#picking-one-of-several-providers-role-interfaces).
 - Several providers of an interface are fine in themselves. A component that wants all of
   them lists `keel::All<I>` (below). The error appears only where one `I` is needed.
-- A component may provide several interfaces: `Provides<Storage>, Provides<HealthCheck>`.
+- A component may provide several interfaces: one `keel::Provides<>` base per interface.
 - It must derive publicly and unambiguously from each one (else
-  `NotDerivedFromInterface<C, I>`).
+  `NotDerivedFromInterface<C, I>`), and from each `keel::Provides<I>` publicly and once
+  (else `InaccessibleProvides<C, I>`; `class` bases are private by default).
+- `keel::Provides<I>` is not a list entry: listing it in `keel::Component<...>` is
+  `ProvidesAsDependency<C, I>`. The list says what a component needs, its bases what it
+  is.
+- keel finds out what a component provides by asking: "does `C` provide `I`?", for each
+  `I` that something refers to (a dependency of a composed component, or the root's
+  `getComponent<I>()` or `run(&I::f)`). C++20 can't list a class's base classes. So a
+  `keel::Provides<I>` that nothing refers to has no effect: it isn't checked, and
+  [`App::toDot()`](inspection-and-testing.md) doesn't show it.
 
 This is how you swap implementations without touching the components that use them:
 production composes `DiskStorage`, a test composes `FakeStorage` (see
@@ -120,9 +135,10 @@ production composes `DiskStorage`, a test composes `FakeStorage` (see
 
 ### Dependencies match by exact type
 
-A dependency on `T` resolves to the component `T`, or to the one that lists
-`Provides<T>` (or `Alternative<T>`). Nothing else: keel doesn't look for a class that happens to derive from `T`.
-When one does, that is almost always a forgotten `Provides<T>`, so keel reports it:
+A dependency on `T` resolves to the component `T`, or to the one that derives from
+`Provides<T>` (or lists `Alternative<T>`). Nothing else: keel doesn't look for a class that
+happens to derive from `T`. When one does, that is almost always a forgotten
+`Provides<T>`, so keel reports it:
 
 ```cpp
 class PrometheusMetrics : public keel::Component<>, public Metrics {};  // no Provides<Metrics>
@@ -140,7 +156,7 @@ To replace a component by a subclass (a fake clock in a test), let the component
 itself. Its subclasses inherit the `Provides<>`:
 
 ```cpp
-class Clock : public keel::Component<keel::Provides<Clock>> {
+class Clock : public keel::Component<>, public keel::Provides<Clock> {
 public:
     virtual long now() const;
 };
@@ -168,8 +184,8 @@ struct HealthCheck {
     virtual bool healthy() const = 0;
 };
 
-class Database : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck { /* ... */ };
-class Cache : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck { /* ... */ };
+class Database : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck { /* ... */ };
+class Cache : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck { /* ... */ };
 
 class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {
     void init() override { checks_ = getAll<HealthCheck>(); }
@@ -204,8 +220,8 @@ class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {
   call it in `init()` and keep it.
 - Every provider comes before the component that lists the collection.
 - **A component is not part of its own list.** A composite (a `HealthCheck` that checks
-  all the others) lists both `Provides<HealthCheck>` and `All<HealthCheck>` and gets the
-  others; it is ordered after them.
+  all the others) derives from `Provides<HealthCheck>`, lists `All<HealthCheck>`, and gets
+  the others; it is ordered after them.
 - Providers that configuration turned off (a disabled
   [`keel::Conditional`](runtime-decisions.md#keelconditional-a-component-that-may-be-off))
   are left out. So that an `All<I>` is never empty, at least one provider must not be

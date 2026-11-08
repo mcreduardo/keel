@@ -7,7 +7,7 @@ struct Shell {
     virtual int serve() = 0;
 };
 
-class Terminal : public keel::Component<keel::Provides<Shell>>, public Shell, public keel::Conditional {
+class Terminal : public keel::Component<>, public keel::Provides<Shell>, public Shell, public keel::Conditional {
 public:
     int serve() override { return 0; }
 

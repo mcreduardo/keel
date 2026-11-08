@@ -5,7 +5,7 @@ struct Plugin {
     virtual ~Plugin() = default;
 };
 
-class Spellcheck : public keel::Component<keel::Provides<Plugin>>, public Plugin {};
+class Spellcheck : public keel::Component<>, public keel::Provides<Plugin>, public Plugin {};
 
 class PluginMenu : public keel::Component<keel::InitAfter<Plugin>, keel::All<Plugin>> {};
 

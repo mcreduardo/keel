@@ -33,7 +33,7 @@ class Router : public keel::Component<Logger> {
     void init() override { events.push_back("init Router"); }
 };
 
-class HttpServer : public keel::Component<Config, Router, keel::Provides<Shell>>, public Shell {
+class HttpServer : public keel::Component<Config, Router>, public keel::Provides<Shell>, public Shell {
 public:
     int serve() override {
         events.push_back("serve");

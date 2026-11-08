@@ -25,7 +25,7 @@ struct Labelled {
     int label = 0;
 };
 
-class Database : public keel::Component<keel::Provides<HealthCheck>>, public Labelled, public HealthCheck {
+class Database : public keel::Component<>, public keel::Provides<HealthCheck>, public Labelled, public HealthCheck {
 public:
     Database() { events.push_back("+Database"); }
     ~Database() override { events.push_back("-Database"); }
@@ -37,7 +37,7 @@ private:
 };
 
 // Depends on Database, so it comes after it whatever the compose<...> order.
-class Cache : public keel::Component<Database, keel::Provides<HealthCheck>>, public HealthCheck {
+class Cache : public keel::Component<Database>, public keel::Provides<HealthCheck>, public HealthCheck {
 public:
     std::string name() const override { return "cache"; }
 
@@ -46,7 +46,7 @@ private:
     void deinit() noexcept override { events.push_back("deinit Cache"); }
 };
 
-class Queue : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck {
+class Queue : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck {
 public:
     std::string name() const override { return "queue"; }
 
@@ -89,8 +89,8 @@ private:
     std::size_t entries_ = 99;
 };
 
-class Spellcheck : public keel::Component<keel::Provides<Plugin>>, public Plugin {};
-class Formatter : public keel::Component<keel::Provides<Plugin>>, public Plugin {};
+class Spellcheck : public keel::Component<>, public keel::Provides<Plugin>, public Plugin {};
+class Formatter : public keel::Component<>, public keel::Provides<Plugin>, public Plugin {};
 
 std::string errorOf(const HealthEndpoint& endpoint) {
     try {
@@ -183,7 +183,7 @@ TEST(get_all_from_a_constructor_throws) {
 
 namespace {
 
-class AllChecks : public keel::Component<keel::Provides<HealthCheck>, keel::All<HealthCheck>>, public HealthCheck {
+class AllChecks : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>, public HealthCheck {
 public:
     std::string name() const override {
         std::string out = "all of";
@@ -221,7 +221,7 @@ TEST(an_all_of_i_includes_a_composite_provider_last) {
 
 namespace {
 
-class Clock : public keel::Component<keel::Provides<Clock>> {
+class Clock : public keel::Component<>, public keel::Provides<Clock> {
 public:
     virtual int now() const { return 1000; }
 };

@@ -31,7 +31,7 @@ class Logger : public keel::Component<Config> {
     void init() override { work(2); }
 };
 
-class Database : public keel::Component<Config, Logger, keel::Provides<HealthCheck>>, public HealthCheck {
+class Database : public keel::Component<Config, Logger>, public keel::Provides<HealthCheck>, public HealthCheck {
 public:
     bool healthy() const override { return true; }
 
@@ -40,7 +40,7 @@ private:
     void deinit() noexcept override { work(10); }
 };
 
-class Cache : public keel::Component<Logger, keel::Optional<Database>, keel::Provides<HealthCheck>>,
+class Cache : public keel::Component<Logger, keel::Optional<Database>>, public keel::Provides<HealthCheck>,
               public HealthCheck {
 public:
     bool healthy() const override { return true; }

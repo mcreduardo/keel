@@ -353,8 +353,8 @@ private:
     }
 };
 
-class Spell : public Logged<keel::Provides<Plugin>, keel::AsyncInit>, public Plugin {};
-class Grammar : public Logged<keel::Provides<Plugin>>, public Plugin {};
+class Spell : public Logged<keel::AsyncInit>, public keel::Provides<Plugin>, public Plugin {};
+class Grammar : public Logged<>, public keel::Provides<Plugin>, public Plugin {};
 class Menu : public Logged<keel::All<Plugin>, keel::AsyncInit> {
 public:
     std::size_t plugins = 0;
@@ -366,7 +366,7 @@ private:
     }
 };
 class Late : public Logged<keel::InitAfter<Menu>, keel::AsyncInit> {};
-class Draft : public Logged<keel::Provides<Plugin>, keel::AsyncInit>, public Plugin, public keel::Conditional {
+class Draft : public Logged<keel::AsyncInit>, public keel::Provides<Plugin>, public Plugin, public keel::Conditional {
     bool enabled() const override { return false; }
 };
 

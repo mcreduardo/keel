@@ -54,9 +54,9 @@ Fix: list it once. For overlapping groups, make the shared part its own bundle.
 **`AbstractComponent<T>`** (3). `T` has a pure virtual function, so it can't be created.
 
 Fix: compose the concrete subclass. If others depend on `T`, let `T` provide itself
-(`keel::Component<keel::Provides<T>>`) so the subclass is found as `T`. For a
-`keel::Conditional`, check the signature of `enabled()` (40): it must be
-`bool enabled() const`.
+(`class T : public keel::Component<...>, public keel::Provides<T>`) so the subclass is
+found as `T`. For a `keel::Conditional`, check the signature of `enabled()` (40): it must
+be `bool enabled() const`.
 
 **`EmptyComposition<>`** (4). `compose<>()`, or only empty bundles. Fix: list a component.
 
@@ -122,7 +122,8 @@ Fix: list the marker on its own: `keel::Component<Config, keel::AsyncInit>`.
 
 **A dependency listed twice** (11). `T`, `Optional<T>`, `InitAfter<T>`, `All<T>` and
 `Optional<All<T>>` all name `T`; two of them in one list is an error. The same goes for
-`Provides<I>` and `Alternative<I>`, and for a marker listed twice.
+`Alternative<I>` and for a marker listed twice. (Listing `keel::Provides<I>` twice is this
+error too; its message says to inherit it instead, as in 42.)
 
 ```cpp
 class Server : public keel::Component<Logger, keel::Optional<Logger>> {};
@@ -133,15 +134,25 @@ Fix: keep the one entry that says what you mean.
 
 ### Interfaces and collections
 
-**`NotDerivedFromInterface<C, I>`** (12). `C` lists `keel::Provides<I>` (or
+**`NotDerivedFromInterface<C, I>`** (12). `C` derives from `keel::Provides<I>` (or lists
 `keel::Alternative<I>`), but doesn't derive from `I` publicly and unambiguously, or `I`
 isn't defined at that point.
 
 ```cpp
-class Archive : public keel::Component<keel::Provides<Storage>> {};  // forgot ", public Storage"
+class Archive : public keel::Component<>, public keel::Provides<Storage> {};  // forgot ", public Storage"
+class Service : public keel::Component<Storage> {};
+keel::compose<Service, Archive>();  // NotDerivedFromInterface<Archive, Storage>
 ```
 
 Fix: derive publicly from `I`.
+
+keel can't list a class's base classes (C++20 has no reflection), so it checks a
+`keel::Provides<I>` only when something refers to `I`: an entry of a composed component
+(a dependency, or `keel::Alternative<I>`), or the root's `getComponent<I>()` or
+`run(&I::f)`. A provider of an interface nothing uses isn't checked. The error is reported
+once per mistaken provider, at the first entry that refers to `I` (in `compose<...>`
+order), and the other entries on `I` aren't reported as missing or ambiguous: that follows
+from the mistake. `InaccessibleProvides` (43) works the same way.
 
 **`AmbiguousDependency<C, I, TypeList<Providers...>>`** (13). `C` needs one `I`, and
 several composed components are or provide it.
@@ -160,7 +171,7 @@ configured one in a single component: see
 [Decisions at runtime](runtime-decisions.md#choose-an-implementation)).
 
 **`MixedProviders<I, TypeList<Provides...>, TypeList<Alternatives...>>`** (14). Something
-needs one `I`, and some of its providers are `Provides<I>` while others are
+needs one `I`, and some of its providers derive from `Provides<I>` while others list
 `Alternative<I>`. Reported once per `I`, however many places need it.
 
 Fix: make every provider an `Alternative<I>` and a `keel::Conditional` (a do-nothing
@@ -168,7 +179,8 @@ default is an alternative too), or compose only one.
 
 **`UndeclaredProvider<C, T, Derived>`** (15). `C` depends on `T` (required, `Optional` or
 `InitAfter`), nothing composed is or provides `T`, and `Derived` derives from `T` without
-listing `keel::Provides<T>`. keel matches exact types, so `Derived` would never be found.
+deriving from `keel::Provides<T>`. keel matches exact types, so `Derived` would never be
+found.
 
 ```cpp
 class PrometheusMetrics : public keel::Component<>, public Metrics {};
@@ -176,11 +188,11 @@ class Server : public keel::Component<Metrics> {};
 keel::compose<Server, PrometheusMetrics>();  // UndeclaredProvider<Server, Metrics, PrometheusMetrics>
 ```
 
-Fix: add `keel::Provides<T>` to `Derived`'s list, or depend on `Derived`.
+Fix: derive `Derived` from `keel::Provides<T>` too (`public keel::Provides<T>`), or depend
+on `Derived`.
 
 **`UndeclaredSubclass<C, T, Derived>`** (16). `C` depends on the component `T`, which
-isn't composed, and `Derived`, a subclass of `T`, is. A subclass can't list
-`Provides<T>` itself (it would be a second `keel::Component` base).
+isn't composed, and `Derived`, a subclass of `T`, is.
 
 ```cpp
 class Clock : public keel::Component<> {};
@@ -189,8 +201,9 @@ class Service : public keel::Component<Clock> {};
 keel::compose<Service, FakeClock>();  // UndeclaredSubclass<Service, Clock, FakeClock>
 ```
 
-Fix: compose `T` itself, or list `keel::Provides<T>` in `T`'s own list
-(`Clock : keel::Component<keel::Provides<Clock>>`); its subclasses inherit it.
+Fix: compose `T` itself, or derive `T` from `keel::Provides<T>`
+(`class Clock : public keel::Component<>, public keel::Provides<Clock>`); its subclasses
+inherit it.
 
 **`MissingProvider<C, I>`** (17). `C` lists `keel::All<I>`, which needs at least one
 provider, and no composed component (other than `C`) is or provides `I`.
@@ -207,11 +220,54 @@ class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {};
 keel::compose<HealthEndpoint, Database, Cache>();  // LeftOutOfAll<HealthEndpoint, HealthCheck, Cache>
 ```
 
-Fix: list `keel::Provides<I>` in `Derived` (for a subclass of a component `I`, in `I`'s own
-list), or stop deriving from `I`.
+Fix: derive `Derived` from `keel::Provides<I>` too (for a subclass of a component `I`,
+derive `I` itself from it), or stop deriving from `I`.
 
 **`MisnestedAll<C, I>`** (19). `keel::All<keel::Optional<I>>`. Fix: write
 `keel::Optional<keel::All<I>>` for a list that may be empty.
+
+**`ProvidesAsDependency<C, I>`** (42). `C` lists `keel::Provides<I>` in its
+`keel::Component<...>`. The list says what a component needs (plus
+`keel::Alternative<I>`, `keel::AsyncInit` and `keel::AsyncStart`); what it implements goes
+in its base classes.
+
+```cpp
+class S3Storage : public keel::Component<keel::Provides<Storage>>, public Storage {};
+// ProvidesAsDependency<S3Storage, Storage>
+```
+
+Fix: inherit it: `class S3Storage : public keel::Component<>, public keel::Provides<Storage>,
+public Storage`. Dependents of `I` get no second error.
+
+**`InaccessibleProvides<C, I>`** (43). `C` derives from `keel::Provides<I>` privately (the
+default for a `class`), protectedly, or more than once (itself and through a base that
+provides `I` already), so keel can't see that it provides `I`.
+
+```cpp
+class S3Storage : public keel::Component<>, keel::Provides<Storage>, public Storage {};
+class Service : public keel::Component<Storage> {};
+keel::compose<Service, S3Storage>();  // InaccessibleProvides<S3Storage, Storage>
+```
+
+Fix: `public keel::Provides<I>`, once (a subclass of a provider inherits it). Checked like
+`NotDerivedFromInterface`: only for an `I` something refers to.
+
+**`ProvidesAndAlternative<C, I>`** (44). `C` derives from `keel::Provides<I>` and lists
+`keel::Alternative<I>`.
+
+```cpp
+class S3Storage : public keel::Component<keel::Alternative<Storage>>, public keel::Provides<Storage>,
+                  public Storage, public keel::Conditional { ... };  // ProvidesAndAlternative<S3Storage, Storage>
+```
+
+Fix: keep `Alternative<I>` if configuration chooses it among other implementations,
+`Provides<I>` if it is always the one.
+
+**`keel::Provides<I>` with an `I` no dependency could name** (`keel::Provides<const
+Storage>`, `keel::Provides<int>`, a reference or a keel marker). It is rejected where the
+component is constructed, with the message `keel::Provides<I> needs an interface I that a
+dependency could name`. `I` may be incomplete (forward-declared). `keel::isValid` doesn't
+see it. Fix: name the plain class: `keel::Provides<Storage>`.
 
 ### Inside a component
 
@@ -236,22 +292,25 @@ accessor to use instead.
 **`NotInApp<T>`** (27). `app.getComponent<T>()` for a `T` that is neither a component of
 the App nor provided by one.
 
-Fix: compose it. A component that derives from `T` must list `keel::Provides<T>`.
+Fix: compose it. A component that derives from `T` must also derive from
+`keel::Provides<T>`. If its provider derives from `keel::Provides<T>` but can't be used as a
+`T`, and no component depends on `T`, the error is `NotDerivedFromInterface` (12) or
+`InaccessibleProvides` (43) instead, here and for `run(&T::f)`.
 
 **`AmbiguousInterface<I, TypeList<Providers...>>`** (28). `app.getComponent<I>()`, and
 several components provide `I`.
 
 Fix: get a specific one by its own type, or make each of them a `keel::Alternative<I>` and
 a `keel::Conditional`.
-If some providers are `Provides<I>` and others `Alternative<I>`, the error is
+If some providers derive from `Provides<I>` and others list `Alternative<I>`, the error is
 `MixedProviders` instead (14), for the root and for `run(&I::f)` alike.
 
 **`RunTargetNotComposed<C, F>`** (29). `run(&C::f)`, and `C` isn't composed nor provided.
 An inherited member function names its base class: `&Server::serve` may be
 `&Loop::serve`.
 
-Fix: compose `C`; for an inherited member, list `keel::Provides<Base>` in the component,
-or call it from a lambda.
+Fix: compose `C`; for an inherited member, derive the component from
+`keel::Provides<Base>` too, or call it from a lambda.
 
 **`RunTargetAmbiguous<I, TypeList<Providers...>>`** (30). `run(&I::f)`, and several
 components provide `I`.
@@ -294,7 +353,7 @@ Fix: list `keel::Optional<T>` and use `findComponent<T>()`, which returns `nullp
 don't make it conditional.
 
 **`RequiredConditionalProvider<C, I, Provider>`** (36). `C` requires the interface `I`, and
-its one provider, `Provider`, is a `keel::Conditional` (with `keel::Provides<I>`).
+its one provider, `Provider`, is a `keel::Conditional` (deriving from `keel::Provides<I>`).
 
 Fix: list `keel::Optional<I>`; or compose a provider that is always there, e.g. a
 component that creates the configured implementation, possibly a do-nothing one (see
@@ -312,10 +371,11 @@ isn't conditional.
 **`AlternativeNotConditional<C, I>`** (38). `C` lists `keel::Alternative<I>` but doesn't
 derive from `keel::Conditional`, so configuration can't turn it off. A member called
 `enabled()` doesn't count: keel only asks a `keel::Conditional`. Reported once per
-component, at its first alternative.
+component, at its first alternative that has no other error (such as
+`ProvidesAndAlternative`).
 
-Fix: derive publicly from `keel::Conditional` and override `bool enabled() const`; or list
-`keel::Provides<I>` if it is always the one.
+Fix: derive publicly from `keel::Conditional` and override `bool enabled() const`; or
+derive from `keel::Provides<I>` instead if it is always the one.
 
 **`InaccessibleConditional<T>`** (39). `T` derives from `keel::Conditional` privately (the
 default for a `class`), protectedly, or more than once, so keel can't ask its `enabled()`.

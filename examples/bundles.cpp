@@ -27,7 +27,7 @@ public:
 };
 
 // Provides itself, so a subclass (InMemoryDatabase) can take its place.
-class Database : public keel::Component<Config, Logger, keel::Provides<Database>> {
+class Database : public keel::Component<Config, Logger>, public keel::Provides<Database> {
 public:
     virtual std::string name() const { return "postgres"; }
 

@@ -181,7 +181,7 @@ struct Check {
 struct Tracing;  // never composed
 
 class Config : public keel::Component<> {};
-class Disk : public keel::Component<Config, keel::Provides<Storage>>, public Storage {};
+class Disk : public keel::Component<Config>, public keel::Provides<Storage>, public Storage {};
 class Memory : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
     bool enabled() const override { return true; }
 };
@@ -190,7 +190,7 @@ class Redis : public keel::Component<keel::Alternative<Cache>>, public Cache, pu
 };
 class Migrations : public keel::Component<> {};
 class Metrics : public keel::Component<> {};
-class Ping : public keel::Component<keel::Provides<Check>>, public Check {};
+class Ping : public keel::Component<>, public keel::Provides<Check>, public Check {};
 class Plugins : public keel::Component<keel::Optional<keel::All<Check>>> {};
 class Server : public keel::Component<Storage, Cache, keel::Optional<Metrics>, keel::Optional<Tracing>,
                                       keel::InitAfter<Migrations>, keel::All<Check>> {};
@@ -271,6 +271,33 @@ TEST(to_dot_draws_components_and_edges) {
     disabled.replace(disabled.find(redis), redis.size(),
                      R"x(n4 [label="intro::Redis\nalternative intro::Cache\n(disabled)", color=gray, fontcolor=gray];)x");
     CHECK(app.toDot() == disabled);
+}
+
+namespace intro {
+
+struct Gauge {
+    virtual ~Gauge() = default;
+};
+// Provides Storage and Gauge. Reader refers only to Storage, AfterFlash only to Gauge.
+class Flash : public keel::Component<>, public keel::Provides<Storage>, public keel::Provides<Gauge>,
+              public Storage, public Gauge {};
+class Reader : public keel::Component<keel::Optional<Storage>> {};
+class FastFlash : public Flash {};  // inherits Flash's keel::Provides<>
+class AfterFlash : public keel::Component<keel::InitAfter<Gauge>> {};  // ordering only
+
+}  // namespace intro
+
+TEST(to_dot_shows_the_interfaces_something_refers_to) {
+    using namespace intro;
+    // keel can't list a class's bases: it only knows the interfaces the app refers to.
+    CHECK((labels(keel::compose<Reader, Flash>().toDot()) ==
+           std::vector<std::string>{"intro::Flash\nprovides intro::Storage", "intro::Reader", "intro::Storage"}));
+    CHECK((labels(keel::compose<Reader, FastFlash>().toDot()) ==
+           std::vector<std::string>{"intro::FastFlash\nprovides intro::Storage", "intro::Reader", "intro::Storage"}));
+    CHECK((labels(keel::compose<Flash>().toDot()) == std::vector<std::string>{"intro::Flash"}));
+    // keel::InitAfter<Gauge> refers to Gauge too.
+    CHECK((labels(keel::compose<AfterFlash, Flash>().toDot()) ==
+           std::vector<std::string>{"intro::Flash\nprovides intro::Gauge", "intro::AfterFlash", "intro::Gauge"}));
 }
 
 TEST(to_dot_escapes_names) {

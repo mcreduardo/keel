@@ -1,5 +1,6 @@
 // Must not compile: DiskStorage derives from Storage twice (through Reader and Writer), so a
-// Storage& to it would be ambiguous.
+// Storage& to it would be ambiguous. No component refers to Storage, so the root's
+// getComponent<Storage>() reports it.
 #include <keel.hpp>
 
 struct Storage {
@@ -8,10 +9,11 @@ struct Storage {
 struct Reader : Storage {};
 struct Writer : Storage {};
 
-class DiskStorage : public keel::Component<keel::Provides<Storage>>, public Reader, public Writer {};
+class DiskStorage : public keel::Component<>, public keel::Provides<Storage>, public Reader, public Writer {};
 
-static_assert(!keel::isValid<DiskStorage>, "isValid disagrees with compose");
+static_assert(keel::isValid<DiskStorage>, "isValid disagrees with compose");
 
 int main() {
     auto app = keel::compose<DiskStorage>();
+    app.getComponent<Storage>();
 }

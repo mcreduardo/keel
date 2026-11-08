@@ -24,8 +24,14 @@ First release: a single C++20 header, standard library only, no RTTI.
 - Lifecycle: `init()`, `start()`, `stop()` and `deinit()` in dependency order (reverse on
   the way down); a failed `init()` or `start()` rolls back and rethrows; `stop()` and
   `deinit()` are `noexcept`. `App::run`, `keel::run` and member-function entry points.
-- Interfaces: `keel::Provides<I>`, with ambiguity reported at compile time and access to
-  interfaces from the app.
+- Interfaces: `keel::Provides<I>`, a base class a component derives from (next to
+  `keel::Component<...>`, which lists only dependencies), with ambiguity reported at
+  compile time and access to interfaces from the app. keel asks each component about the
+  interfaces something refers to; a `Provides<I>` that nothing refers to is not checked.
+  Listing it in `keel::Component<...>` (`ProvidesAsDependency`), deriving from it
+  privately or twice (`InaccessibleProvides`), next to `keel::Alternative<I>`
+  (`ProvidesAndAlternative`), and an `I` no dependency could name (`Provides<const I>`) are
+  compile errors.
 - Collections: `keel::All<I>` and `keel::Optional<keel::All<I>>`, with `getAll<I>()`.
 - Decisions at runtime: `keel::Conditional`, an opt-in base class whose `enabled()` lets
   configuration turn a component off, and `keel::Alternative<I>` (each one a

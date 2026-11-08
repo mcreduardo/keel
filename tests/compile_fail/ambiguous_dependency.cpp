@@ -5,8 +5,8 @@ struct Storage {
     virtual ~Storage() = default;
 };
 
-class DiskStorage : public keel::Component<keel::Provides<Storage>>, public Storage {};
-class MemoryStorage : public keel::Component<keel::Provides<Storage>>, public Storage {};
+class DiskStorage : public keel::Component<>, public keel::Provides<Storage>, public Storage {};
+class MemoryStorage : public keel::Component<>, public keel::Provides<Storage>, public Storage {};
 
 class Service : public keel::Component<Storage> {};
 

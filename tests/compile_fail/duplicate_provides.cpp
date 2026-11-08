@@ -1,4 +1,5 @@
-// Must not compile: keel::Provides<Storage> is listed twice.
+// Must not compile: keel::Provides<Storage> is listed twice in keel::Component<...>. It isn't
+// a dependency (one error, not one per entry).
 #include <keel.hpp>
 
 struct Storage {

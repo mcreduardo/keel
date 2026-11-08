@@ -32,9 +32,8 @@
   by exact type or declared `Provides<T>`, one rule, and the silent cases hid the mistake.
   Cost: a composition that derives from T on purpose without providing it must add
   `Provides<T>` or not depend on T. When T is itself a component (`FakeClock : Clock`), the
-  subclass can't list `Provides<Clock>` (a second `Component<>` base), so the error is
-  `UndeclaredSubclass<C, T, Derived>`: compose T, or let T provide itself
-  (`Clock : Component<Provides<Clock>>`), which its subclasses inherit. Still silent: an
+  error is `UndeclaredSubclass<C, T, Derived>`: compose T, or let T provide itself
+  (`Clock : Component<>, Provides<Clock>`), which its subclasses inherit. Still silent: an
   `InitAfter<T>`/`Optional<T>` whose T nothing composed derives from
   (`InitAfter<std::string>`, or a forgotten compose), and an I that a composed class derives
   from twice (non-virtual diamond: not convertible, so no UndeclaredProvider, and
@@ -53,11 +52,11 @@
   (`AmbiguousDependency`), but `InitAfter<I>` is ordering only and gives no access, so "after
   every provider" is well defined. Alternative: report it as ambiguous too, for one rule.
 
-- **Providing and depending on the same interface.** `Component<Provides<I>, I>` is reported
-  as `DependencyCycle<TypeList<C>>` (one provider) or `AmbiguousDependency` (more), not with
-  its own message. Alternative: a dedicated check ("C provides I and depends on I"). Not done:
-  the existing errors name the type, and the case looks rare. `Component<Provides<I>,
-  InitAfter<I>>` is fine: it orders after the other providers of I (a decorator or chain).
+- **Providing and depending on the same interface.** `C : Component<I>, Provides<I>` is
+  reported as `DependencyCycle<TypeList<C>>` (one provider) or `AmbiguousDependency` (more),
+  not with its own message. Alternative: a dedicated check ("C provides I and depends on
+  I"). Not done: the existing errors name the type, and the case looks rare.
+  `C : Component<InitAfter<I>>, Provides<I>` is fine: it orders after the other providers of I (a decorator or chain).
   The same holds for `Alternative<I>`: an alternative that depends on I is ordered after
   every alternative, itself included, so it is `DependencyCycle<TypeList<C>>`. And an
   alternative that needs a dependent of I is on a cycle with it (compile-fail test
@@ -110,9 +109,9 @@
     `enabled()`s agree. Alternative: allow it and check at runtime that a required
     conditional dependency is enabled when its dependent is (the old runtime failure, in
     fewer places).
-  - **A base class, not a `Component<...>` list entry.** `Provides<I>`, `AsyncInit` and
-    `Alternative<I>` are list entries; `Conditional` is a base so that its pure virtual
-    forces the right signature (a wrong one is an abstract-class error, not a silent
+  - **A base class, not a `Component<...>` list entry.** `AsyncInit` and `Alternative<I>`
+    are list entries (`Provides<I>` is a base too, since 2026-11-08); `Conditional` is a
+    base so that its pure virtual forces the right signature (a wrong one is an abstract-class error, not a silent
     non-override). Alternative: a `keel::Conditional` tag in the list plus a check that
     `enabled()` exists with the right signature (consistent style, but the check is
     hand-written and the hook would have to live in every component again).
@@ -149,7 +148,8 @@
   `Alternative<I>`. Alternative:
   the `Provides<I>` provider as the default when no alternative is enabled. Not done: one
   rule ("all providers are alternatives"), and the default can be an alternative too.
-  `Provides<I>` and `Alternative<I>` in the same component count as a duplicate.
+  A component that derives from `Provides<I>` and lists `Alternative<I>` is
+  `ProvidesAndAlternative<C, I>`.
 
 - **A disabled component that looks up a dependency gets `keel::Error`** ("X used Y, but X
   is disabled"), e.g. from a method the root calls on a reference it got before `init()`.
@@ -158,10 +158,10 @@
 - **`All<I>` leaves out the component itself.** A component that provides I and lists
   `All<I>` (a composite: a HealthCheck that checks all the others) gets every other
   provider, and is ordered after them; "at least one" counts the others. Same rule as
-  `InitAfter<I>`. Alternative: report it as a cycle, like `Component<Provides<I>, I>`.
+  `InitAfter<I>`. Alternative: report it as a cycle, like `C : Component<I>, Provides<I>`.
   Not obvious consequences, reported only as `DependencyCycle<...>`: two composites of the
   same I each come after the other (compile-fail test `two_composites`); and a subclass of
-  a composite (`Y : X` with `X : Component<Provides<I>, All<I>>`) inherits both entries, so
+  a composite (`Y : X` with `X : Component<All<I>>, Provides<I>`) inherits both, so
   X and Y each come after the other. A dedicated message could explain these.
 
 - **One entry per type, collections included.** T, `Optional<T>`, `InitAfter<T>`, `All<T>`
@@ -196,8 +196,8 @@
 - **`run(&C::f)` resolves C like `App::getComponent<C>()`.** C is a composed component or
   an interface with exactly one provider (`run(&Shell::serve)`). A member function inherited
   from a base class has the base's type (`&Server::serve` is `void (Loop::*)()`), so it works
-  if the component `Provides<Loop>`, and is otherwise `RunTargetNotComposed<Loop, F>`, whose
-  message suggests `Provides<Loop>` or a lambda. Alternative: call it on the one composed
+  if the component derives from `Provides<Loop>`, and is otherwise
+  `RunTargetNotComposed<Loop, F>`, whose message suggests `Provides<Loop>` or a lambda. Alternative: call it on the one composed
   component that derives from Loop. Not done for the same reason as `UndeclaredProvider`:
   one matching rule everywhere.
 
@@ -224,7 +224,7 @@
   `EmptyComposition<>`.
 
 - **A bundle is not a dependency.** Any entry naming a bundle (`Component<Core>`,
-  `Optional<Core>`, `InitAfter<Core>`, `Provides<Core>`, `All<Core>`) is
+  `Optional<Core>`, `InitAfter<Core>`, `All<Core>`) is
   `BundleAsDependency<C, Bundle<...>>`: list the components used. Alternative: treat it as
   "depends on each of them". Not done: a component should name what it uses, and the
   bundle's contents may change without the component noticing.
@@ -356,3 +356,35 @@
   so `find_package(keel 0.1)` accepts 0.1.x only. Alternatives: `SameMajorVersion` (would
   accept 0.2 for 0.1, wrong for 0.x), `AnyNewerVersion` (same problem, worse). Switch to
   `SameMajorVersion` at 1.0. CI installs and builds `tests/install_consumer` against it.
+
+- **`Provides<I>` is a base class, not a `Component<...>` list entry** (2026-11-08). The
+  list says what a component needs; its base classes say what it is (`Provides<I>`, like
+  `Conditional`). Listing `Provides<I>` is `ProvidesAsDependency<C, I>`; deriving from it
+  privately, protectedly or twice is `InaccessibleProvides<C, I>`. Alternative: keep it in
+  the list (one place to read everything a component declares, and keel can enumerate
+  what a component provides). Revisitable.
+
+- **Interfaces nothing refers to are invisible to keel.** C++20 can't list the bases of a
+  class, so keel asks each composed component "do you provide I?" only for the I that
+  something refers to: an entry of a component's list (dependency or `Alternative<I>`),
+  or the root's `getComponent<I>()` / `run(&I::f)`. Consequences, compared with
+  `Provides<I>` in the list:
+  - A `Provides<I>` that nothing refers to isn't checked: no `NotDerivedFromInterface` or
+    `InaccessibleProvides` for it, and `isValid<C>` is true for such a C on its own.
+  - `Provides<const I>` (or any type no entry can name) is a compile error in
+    `Provides`'s constructor, so only where the component is constructed; `isValid` doesn't
+    see it (it used to be `InvalidDependency`, which `isValid` saw).
+  - `App::toDot()` labels a component only with the interfaces something refers to, in the
+    order keel first meets them (it was the list order).
+  - A provider that can't be used as an I is reported once, at the first entry that refers
+    to I (a dependency or `Alternative<I>`) in compose order (else at the root), and the
+    other entries on I are not checked further (they would report a missing or ambiguous I). A second, independent mistake
+    about I (an `Alternative<I>` without deriving from I, say) shows up once the first is
+    fixed.
+  Alternatives: C++26 reflection (`bases_of`) would let keel enumerate the bases and check
+  every `Provides<>`; a CRTP marker (`Provides<I, Self>`) could check itself but is
+  heavier to write.
+  Cost: the bindings for lookups are now built per referred type (not per component), and
+  each referred type is asked of every component. The 150-component test in
+  `interfaces_test.cpp` takes about 35% more compile time (Apple clang 17, `-fsyntax-only`:
+  4.1 s vs 3.0 s CPU); smaller files about 8% more.

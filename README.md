@@ -5,7 +5,7 @@
 **Structure for C++ applications: components with declared dependencies, a composition
 checked by the compiler, and startup and shutdown order computed for you.**
 
-keel is a single C++20 header (about 2,500 lines, standard library only). You split your
+keel is a single C++20 header (about 3,000 lines, standard library only). You split your
 application into *components* (the logger, the config, the database pool, the HTTP
 server, the device manager), and each component says in its class declaration which other
 components it uses. You list the components of your application in one place. keel then:
@@ -115,7 +115,7 @@ class Database : public keel::Component<Config, Logger> {
 every provider of it. Two providers where one is needed is a compile error.
 
 ```cpp
-class DiskStorage : public keel::Component<keel::Provides<Storage>>, public Storage { /* ... */ };
+class DiskStorage : public keel::Component<>, public keel::Provides<Storage>, public Storage { /* ... */ };
 class Service : public keel::Component<Storage> { /* ... */ };                      // the one Storage
 class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> { /* ... */ };  // every HealthCheck
 ```
@@ -164,7 +164,7 @@ top; the CMake build compiles all of them and runs them as tests.
 | [`introspection.cpp`](examples/introspection.cpp) | `initOrder()`, `timings()`, `toDot()` |
 | [`bundles.cpp`](examples/bundles.cpp) | `Bundle`, several compositions, `requireValid`, `isValid` |
 | [`telemetryd.cpp`](examples/telemetryd.cpp) | a small telemetry agent: seven components, no god class |
-| [`compile_errors.cpp`](examples/compile_errors.cpp) | every compile-time check: build with `-DKEEL_ERROR=1` … `41` |
+| [`compile_errors.cpp`](examples/compile_errors.cpp) | every compile-time check: build with `-DKEEL_ERROR=1` … `44` |
 
 ## Requirements
 

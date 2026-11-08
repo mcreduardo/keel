@@ -95,8 +95,8 @@ breaks them, at compile time wherever possible.
    don't compile.
 
 4. **Matching is exact.** A dependency on `T` finds the component `T`, or a component whose
-   `keel::Component<...>` list (its own or one it inherits) has `Provides<T>` or
-   `Alternative<T>`. It never finds a class just because it derives from `T`.
+   class derives publicly from `keel::Provides<T>` (itself or through a base) or whose list
+   has `Alternative<T>`. It never finds a class just because it derives from `T`.
    *Enforced:* if that class is the only candidate, or it would be left out of `All<T>`, you
    get a compile error (`UndeclaredProvider`, `UndeclaredSubclass`, `LeftOutOfAll`), not a
    silent miss.

@@ -1,5 +1,5 @@
 // Must not compile: Service needs a Clock, and only FakeClock, a subclass of the component
-// Clock, is composed. Clock doesn't list keel::Provides<Clock>, so FakeClock isn't a Clock to keel.
+// Clock, is composed. Clock doesn't derive from keel::Provides<Clock>, so FakeClock isn't a Clock to keel.
 #include <keel.hpp>
 
 class Clock : public keel::Component<> {};

@@ -74,8 +74,8 @@ public:
     virtual ~Check() = default;
 };
 
-class DiskCheck : public keel::Component<keel::Provides<Check>>, public Check {};
-class NetCheck : public keel::Component<keel::Provides<Check>>, public Check {};
+class DiskCheck : public keel::Component<>, public keel::Provides<Check>, public Check {};
+class NetCheck : public keel::Component<>, public keel::Provides<Check>, public Check {};
 
 class Plugin {
 public:

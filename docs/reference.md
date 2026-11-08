@@ -11,16 +11,22 @@ show up in compile errors, not in your code.
 
 | | |
 |---|---|
-| `keel::Component<Entries...>` | Base class. Each entry is one of the rows below. |
+| `keel::Component<Entries...>` | Base class. Each entry is one of the rows below: what the component needs, plus `Alternative<I>`, `AsyncInit` and `AsyncStart`. |
 | `T` | required dependency |
 | `keel::Optional<T>` | optional dependency |
 | `keel::InitAfter<T>` | ordering only |
-| `keel::Provides<I>` | implements the interface `I` (derive from `I` publicly too) |
 | `keel::Alternative<I>` | implements `I`, one of several chosen at runtime (the component must be a `keel::Conditional`) |
 | `keel::All<I>` | every provider of `I`, at least one |
 | `keel::Optional<keel::All<I>>` | every provider of `I`, possibly none |
 | `keel::AsyncInit` | `init()` (and a `keel::Conditional`'s `enabled()`) on a thread of their own |
 | `keel::AsyncStart` | `start()` on a thread of its own |
+
+What a component is goes in its other base classes:
+
+| | |
+|---|---|
+| `public keel::Provides<I>` | implements the interface `I` (derive from `I` publicly too); one per interface. Checked only for an `I` something refers to |
+| `public keel::Conditional` | configuration may turn it off (`bool enabled() const`) |
 
 The listed types may be incomplete in the component's header. Details:
 [Dependencies and interfaces](dependencies.md), [Async startup](async.md).
@@ -156,5 +162,9 @@ Details: [Lifecycle](lifecycle.md), [Inspecting and testing](inspection-and-test
 - **Shared libraries.** A type's identity is the address of a per-type variable. Keep keel's
   symbols visible (default visibility) when an App spans shared libraries, or a type may
   get two identities.
+- **Interfaces nothing refers to are invisible.** keel can't list a class's base classes,
+  so it checks a `keel::Provides<I>` only for an `I` that some entry, `getComponent<I>()`
+  or `run(&I::f)` refers to. Otherwise it isn't checked (`NotDerivedFromInterface`,
+  `InaccessibleProvides`) and `toDot()` doesn't show it.
 - `getAll<I>()` returns a new vector per call (call it in `init()`), and the composition
   root has no `getAll`.

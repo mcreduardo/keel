@@ -50,7 +50,7 @@ public:
     const char* name() const override { return "no"; }
 };
 
-class Compression : public keel::Component<Flags, keel::Provides<Compressor>>, public Compressor {
+class Compression : public keel::Component<Flags>, public keel::Provides<Compressor>, public Compressor {
 public:
     const char* name() const override { return impl_->name(); }  // forwards to the chosen one
 

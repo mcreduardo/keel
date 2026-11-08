@@ -110,7 +110,9 @@ std::ofstream("graph.dot") << app.toDot();  // then: dot -Tsvg graph.dot -o grap
 ```
 
 One box per component, in init order, listing the interfaces it provides ("provides I",
-"alternative I") and its markers ("async init", "async start"). One arrow per ordering
+"alternative I") and its markers ("async init", "async start"). Only interfaces that some
+component of the app refers to are listed: `keel::Provides<I>` is a base class, and keel
+can't list a class's bases, only ask about the interfaces it knows. One arrow per ordering
 edge, from a component to the component it comes after; dependencies are drawn to the
 right, so init order reads right to left.
 
@@ -132,7 +134,7 @@ To test a component, compose a **smaller application**: the component, its real
 dependencies where convenient, and fakes for the rest. Fakes provide the same interface:
 
 ```cpp
-class FakeStorage : public keel::Component<keel::Provides<Storage>>, public Storage {
+class FakeStorage : public keel::Component<>, public keel::Provides<Storage>, public Storage {
 public:
     void put(const std::string& key, const std::string&) override { lastKey = key; }
     std::string lastKey;

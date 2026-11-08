@@ -105,7 +105,7 @@ int main(int argc, char** argv) {
 
 ```cpp
 app.getComponent<HttpServer>();  // a component of the App
-app.getComponent<Storage>();     // the one component that lists keel::Provides<Storage>
+app.getComponent<Storage>();     // the one component that derives from keel::Provides<Storage>
 ```
 
 - It works **before `init()`** too, so the root can configure a component before startup.
@@ -115,7 +115,9 @@ app.getComponent<Storage>();     // the one component that lists keel::Provides<
   for it before `init()` throws `keel::Error`. After `init()` you get the enabled one.
 - A type the `App` doesn't have is a compile error (`NotInApp<T>`), and so is an interface
   with two providers (`AmbiguousInterface<I, TypeList<...>>`, or `MixedProviders<...>` when
-  some are `Provides<I>` and others `Alternative<I>`).
+  some derive from `Provides<I>` and others list `Alternative<I>`). So is a provider that
+  derives from `Provides<I>` but can't be used as an `I` (`NotDerivedFromInterface`,
+  `InaccessibleProvides`).
 
 ## Grouping: `keel::Bundle<...>`
 
@@ -149,7 +151,9 @@ static_assert(!keel::isValid<Core, Http>);                     // Router needs a
 
 `requireValid` is true or the compile error `compose` would give. `isValid` is a plain
 `bool`. Put guards next to the compositions, and every variant is checked on every build,
-including variants that no binary of the current build uses. More in
+including variants that no binary of the current build uses. A `keel::Provides<I>` is
+checked only for an `I` the composition refers to, so a broken one that nothing uses passes
+the guards. More in
 [Inspecting and testing](inspection-and-testing.md#checking-compositions-requirevalid-and-isvalid).
 
 ## Several compositions in one program

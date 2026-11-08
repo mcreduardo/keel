@@ -52,7 +52,7 @@ struct FrontImu { static constexpr std::uint8_t address = 0x68; };
 struct RearImu { static constexpr std::uint8_t address = 0x69; };
 
 template <class Position>
-class Mpu6050 : public keel::Component<Bus, keel::Provides<Sensor>>, public Sensor {
+class Mpu6050 : public keel::Component<Bus>, public keel::Provides<Sensor>, public Sensor {
     void init() override { open(Position::address); }
     void open(std::uint8_t address);
 };
@@ -81,7 +81,7 @@ template <class Mount>
 struct MountedImu : Imu {};  // "the IMU at this mount"
 
 template <class Mount>
-class Bmi088 : public keel::Component<SpiBus, keel::Provides<Imu>, keel::Provides<MountedImu<Mount>>>,
+class Bmi088 : public keel::Component<SpiBus>, public keel::Provides<Imu>, public keel::Provides<MountedImu<Mount>>,
                public MountedImu<Mount> {
 public:
     Vector3 acceleration() const override;
@@ -113,7 +113,7 @@ A fake implements the same interface as the real component, and a test composes 
 component without an interface, let it provide itself; then a subclass can replace it:
 
 ```cpp
-class Clock : public keel::Component<keel::Provides<Clock>> {
+class Clock : public keel::Component<>, public keel::Provides<Clock> {
 public:
     virtual std::chrono::system_clock::time_point now() const { return std::chrono::system_clock::now(); }
 };

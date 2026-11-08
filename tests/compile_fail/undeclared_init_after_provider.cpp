@@ -1,5 +1,5 @@
 // Must not compile: keel::InitAfter<Metrics> would order nothing, since PrometheusMetrics
-// derives from Metrics but doesn't list keel::Provides<Metrics>.
+// derives from Metrics but doesn't derive from keel::Provides<Metrics>.
 #include <keel.hpp>
 
 struct Metrics {

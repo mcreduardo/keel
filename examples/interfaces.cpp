@@ -1,7 +1,7 @@
 // interfaces: depending on interfaces instead of concrete components.
 //
-//   keel::Provides<I>               this component implements the interface I
-//   I                               the one provider of I (two providers: compile error)
+//   public keel::Provides<I>        a base class: this component implements the interface I
+//   I                               in the list: the one provider of I (two: compile error)
 //   keel::All<I>                    every provider of I, at least one
 //   keel::Optional<keel::All<I>>    every provider of I, possibly none
 //
@@ -39,14 +39,14 @@ struct Plugin {
 
 // A component that provides itself: its subclasses provide Clock too, so a test can
 // compose a FakeClock in its place.
-class Clock : public keel::Component<keel::Provides<Clock>> {
+class Clock : public keel::Component<>, public keel::Provides<Clock> {
 public:
     virtual long now() const { return 1700000000; }
 };
 
 // Two implementations of Storage; an app composes one of them. DiskStorage is also a
 // HealthCheck.
-class DiskStorage : public keel::Component<keel::Provides<Storage>, keel::Provides<HealthCheck>>,
+class DiskStorage : public keel::Component<>, public keel::Provides<Storage>, public keel::Provides<HealthCheck>,
                     public Storage,
                     public HealthCheck {
 public:
@@ -56,19 +56,19 @@ public:
     std::string name() const override { return "disk"; }
 };
 
-class MemoryStorage : public keel::Component<keel::Provides<Storage>>, public Storage {
+class MemoryStorage : public keel::Component<>, public keel::Provides<Storage>, public Storage {
 public:
     void put(const std::string& key, const std::string&) override { std::printf("  memory: put %s\n", key.c_str()); }
     std::string describe() const override { return "memory"; }
 };
 
-class Network : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck {
+class Network : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck {
 public:
     bool healthy() const override { return true; }
     std::string name() const override { return "network"; }
 };
 
-class Compression : public keel::Component<keel::Provides<Plugin>>, public Plugin {
+class Compression : public keel::Component<>, public keel::Provides<Plugin>, public Plugin {
 public:
     std::string name() const override { return "compression"; }
 };
@@ -108,14 +108,14 @@ using SelectedStorage = DiskStorage;
 #endif
 
 // Test fakes: the same interfaces, recording the calls.
-class FakeStorage : public keel::Component<keel::Provides<Storage>>, public Storage {
+class FakeStorage : public keel::Component<>, public keel::Provides<Storage>, public Storage {
 public:
     void put(const std::string& key, const std::string&) override { lastKey = key; }
     std::string describe() const override { return "fake"; }
     std::string lastKey;
 };
 
-class FakeHealth : public keel::Component<keel::Provides<HealthCheck>>, public HealthCheck {
+class FakeHealth : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck {
 public:
     bool healthy() const override { return true; }
     std::string name() const override { return "fake"; }
