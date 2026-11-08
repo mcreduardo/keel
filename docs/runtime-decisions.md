@@ -64,16 +64,16 @@ runtime: there is always exactly one `Cache`. The trade-offs:
 
 When the implementations need different dependencies, or each needs its own lifecycle,
 async init or introspection, compose all of them and let configuration enable one. Each
-lists `keel::Alternative<I>` and derives from `keel::Conditional`:
+derives from `keel::Alternative<I>`, from `I` and from `keel::Conditional`:
 
 ```cpp
-class RedisCache : public keel::Component<Config, Network, keel::Alternative<Cache>>, public Cache,
+class RedisCache : public keel::Component<Config, Network>, public keel::Alternative<Cache>, public Cache,
                    public keel::Conditional {
     bool enabled() const override { return getComponent<Config>().cache() == "redis"; }
     bool get(std::string_view key, std::string& value) override;
 };
 
-class MemoryCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache,
+class MemoryCache : public keel::Component<Config>, public keel::Alternative<Cache>, public Cache,
                     public keel::Conditional {
     bool enabled() const override { return getComponent<Config>().cache() == "memory"; }
     bool get(std::string_view key, std::string& value) override;
@@ -91,6 +91,8 @@ auto app = keel::compose<Repository, RedisCache, MemoryCache, Network, Config>(a
   `Alternative<Cache>`. An alternative that doesn't derive from `keel::Conditional` is an
   error (`AlternativeNotConditional`), and so is mixing alternatives with a plain
   `Provides<Cache>` base (`MixedProviders`) as soon as something needs one `Cache`.
+  `keel::Alternative<I>` is a base class, checked like `keel::Provides<I>`: only for an `I`
+  something refers to (here `Repository`), except the `keel::Conditional` rule.
 - **Runtime:** dependents of `Cache` are ordered after every alternative, so the choice is
   made before any of them initializes. When one does:
   - one alternative enabled: it gets that one;
@@ -107,9 +109,9 @@ auto app = keel::compose<Repository, RedisCache, MemoryCache, Network, Config>(a
   get the enabled one); before `init()`, `getComponent<Cache>()` throws `keel::Error`.
 - A single `Alternative<I>` is allowed (a test composition may compose just one): a
   provider that configuration may turn off, for dependents that must have it. They fail at
-  startup if it is off. This (also a component that lists `Alternative<Self>`, required as
-  `Self`) is the only way to require a conditional component; a required dependency on a
-  concrete alternative (`Component<RedisCache>`) is `RequiredConditional`.
+  startup if it is off. This (also a component that derives from `Alternative<Self>`,
+  required as `Self`) is the only way to require a conditional component; a required
+  dependency on a concrete alternative (`Component<RedisCache>`) is `RequiredConditional`.
 
 ## `keel::Conditional`: a component that may be off
 

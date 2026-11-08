@@ -250,7 +250,8 @@ struct HealthCheck {
 };
 
 template <bool on, int id = 0>
-class Check : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck, public keel::Conditional {
+class Check : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck,
+              public keel::Conditional {
 public:
     std::string name() const override { return on ? "on" : "off"; }
 
@@ -311,7 +312,8 @@ struct Cache {
     virtual std::string kind() const = 0;
 };
 
-class RedisCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+class RedisCache : public keel::Component<Config>, public keel::Alternative<Cache>, public Cache,
+                   public keel::Conditional {
 public:
     std::string kind() const override { return "redis"; }
 
@@ -325,7 +327,8 @@ private:
     void start() override { events.push_back("start RedisCache"); }
 };
 
-class MemoryCache : public keel::Component<Config, keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+class MemoryCache : public keel::Component<Config>, public keel::Alternative<Cache>, public Cache,
+                    public keel::Conditional {
 public:
     std::string kind() const override { return "memory"; }
 
@@ -468,6 +471,42 @@ TEST(the_root_reports_no_enabled_alternative) {
     app.init();
     CHECK(errorOf([&] { app.getComponent<Cache>(); }) ==
           "keel: getComponent<decisions::Cache>(): none of its alternatives (decisions::RedisCache) is enabled");
+}
+
+TEST(the_root_reports_several_enabled_alternatives) {
+    // Nothing depends on Cache, so init() doesn't check the choice; the root's lookup does.
+    settings = {};
+    settings.cache = "both";
+    auto app = keel::compose<RedisCache, MemoryCache, Config>();
+    app.init();
+    CHECK(errorOf([&] { app.getComponent<Cache>(); }) ==
+          "keel: getComponent<decisions::Cache>(): several of its alternatives are enabled (only one may be): "
+          "decisions::RedisCache, decisions::MemoryCache");
+}
+
+namespace decisions {
+
+// An alternative inherited from a component base class.
+class BaseCache : public keel::Component<>, public keel::Alternative<Cache>, public Cache, public keel::Conditional {
+public:
+    std::string kind() const override { return "base"; }
+
+private:
+    bool enabled() const override { return true; }
+};
+class DerivedCache : public BaseCache {
+public:
+    std::string kind() const override { return "derived"; }
+};
+
+}  // namespace decisions
+
+TEST(an_inherited_alternative_is_found) {
+    using namespace decisions;
+    auto app = keel::compose<DerivedCache>();
+    app.init();
+    CHECK(&app.getComponent<Cache>() == static_cast<Cache*>(&app.getComponent<DerivedCache>()));
+    CHECK(keel::run<keel::App<DerivedCache>>(&Cache::kind) == "derived");
 }
 
 TEST(the_root_gets_no_alternative_after_a_failed_init) {

@@ -109,17 +109,21 @@
     `enabled()`s agree. Alternative: allow it and check at runtime that a required
     conditional dependency is enabled when its dependent is (the old runtime failure, in
     fewer places).
-  - **A base class, not a `Component<...>` list entry.** `AsyncInit` and `Alternative<I>`
-    are list entries (`Provides<I>` is a base too, since 2026-11-08); `Conditional` is a
-    base so that its pure virtual forces the right signature (a wrong one is an abstract-class error, not a silent
-    non-override). Alternative: a `keel::Conditional` tag in the list plus a check that
-    `enabled()` exists with the right signature (consistent style, but the check is
-    hand-written and the hook would have to live in every component again).
+  - **A base class, not a `Component<...>` list entry.** `AsyncInit` is a list entry
+    (`Provides<I>` and `Alternative<I>` are bases too, since 2026-11-08); `Conditional` is
+    a base so that its pure virtual forces the right signature (a wrong one is an
+    abstract-class error, not a silent non-override). Alternative: a `keel::Conditional`
+    tag in the list plus a check that `enabled()` exists with the right signature
+    (consistent style, but the check is hand-written and the hook would have to live in
+    every component again).
   - **`All<I>` needs one provider that isn't conditional**, so it is never empty. An
     `All<I>` over alternatives only is an error too; `Optional<All<I>>` is the way.
     Alternative: allow it and throw at runtime when every provider is off (the old rule).
-  - **`Alternative<I>` needs `Conditional`** rather than implying it, so `enabled()` stays
-    a normal override with the compiler's checks.
+  - **`Alternative<I>` needs `Conditional`** rather than implying it (it doesn't derive
+    from it), so `enabled()` stays a normal override with the compiler's checks. Checked
+    per component through a common base of every `Alternative<I>`, so it needs no
+    reference to I; the diagnostic is `AlternativeNotConditional<C>` (it named I while
+    `Alternative<I>` was a list entry).
   - **Root access to a conditional component** stays a runtime check (see
     `App::getComponent<T>()` above).
 
@@ -148,7 +152,7 @@
   `Alternative<I>`. Alternative:
   the `Provides<I>` provider as the default when no alternative is enabled. Not done: one
   rule ("all providers are alternatives"), and the default can be an alternative too.
-  A component that derives from `Provides<I>` and lists `Alternative<I>` is
+  A component that derives from both `Provides<I>` and `Alternative<I>` is
   `ProvidesAndAlternative<C, I>`.
 
 - **A disabled component that looks up a dependency gets `keel::Error`** ("X used Y, but X
@@ -357,30 +361,33 @@
   accept 0.2 for 0.1, wrong for 0.x), `AnyNewerVersion` (same problem, worse). Switch to
   `SameMajorVersion` at 1.0. CI installs and builds `tests/install_consumer` against it.
 
-- **`Provides<I>` is a base class, not a `Component<...>` list entry** (2026-11-08). The
-  list says what a component needs; its base classes say what it is (`Provides<I>`, like
-  `Conditional`). Listing `Provides<I>` is `ProvidesAsDependency<C, I>`; deriving from it
-  privately, protectedly or twice is `InaccessibleProvides<C, I>`. Alternative: keep it in
-  the list (one place to read everything a component declares, and keel can enumerate
-  what a component provides). Revisitable.
+- **`Provides<I>` and `Alternative<I>` are base classes, not `Component<...>` list
+  entries** (2026-11-08). The list says what a component needs; its base classes say what
+  it is (`Provides<I>`, `Alternative<I>`, like `Conditional`). Listing them is
+  `ProvidesAsDependency<C, I>` / `AlternativeAsDependency<C, I>`; deriving from them
+  privately, protectedly or twice is `InaccessibleProvides<C, I>` /
+  `InaccessibleAlternative<C, I>`; both for one I is `ProvidesAndAlternative<C, I>`.
+  Alternative: keep them in the list (one place to read everything a component declares,
+  and keel can enumerate what a component provides). Revisitable.
 
 - **Interfaces nothing refers to are invisible to keel.** C++20 can't list the bases of a
   class, so keel asks each composed component "do you provide I?" only for the I that
-  something refers to: an entry of a component's list (dependency or `Alternative<I>`),
-  or the root's `getComponent<I>()` / `run(&I::f)`. Consequences, compared with
-  `Provides<I>` in the list:
-  - A `Provides<I>` that nothing refers to isn't checked: no `NotDerivedFromInterface` or
-    `InaccessibleProvides` for it, and `isValid<C>` is true for such a C on its own.
-  - `Provides<const I>` (or any type no entry can name) is a compile error in
-    `Provides`'s constructor, so only where the component is constructed; `isValid` doesn't
-    see it (it used to be `InvalidDependency`, which `isValid` saw).
+  something refers to: a dependency of a component, or the root's `getComponent<I>()` /
+  `run(&I::f)`. Consequences, compared with `Provides<I>` and `Alternative<I>` in the list:
+  - A `Provides<I>` or `Alternative<I>` that nothing refers to isn't checked: no
+    `NotDerivedFromInterface`, `InaccessibleProvides`, `InaccessibleAlternative` or
+    `ProvidesAndAlternative` for it, and `isValid<C>` is true for such a C on its own. (An
+    alternative must still be a `Conditional`: that check doesn't need I.)
+  - `Provides<const I>` / `Alternative<const I>` (or any type no entry can name) is a
+    compile error in the marker's constructor, so only where the component is constructed;
+    `isValid` doesn't see it (it used to be `InvalidDependency`, which `isValid` saw).
+  - The root's `getComponent<I>()` on alternatives nothing else refers to builds the
+    candidate list itself (on the stack), since nothing bound I at construction.
   - `App::toDot()` labels a component only with the interfaces something refers to, in the
     order keel first meets them (it was the list order).
-  - A provider that can't be used as an I is reported once, at the first entry that refers
-    to I (a dependency or `Alternative<I>`) in compose order (else at the root), and the
-    other entries on I are not checked further (they would report a missing or ambiguous I). A second, independent mistake
-    about I (an `Alternative<I>` without deriving from I, say) shows up once the first is
-    fixed.
+  - A provider that can't be used as an I is reported once, at the first dependency on I
+    in compose order (else at the root), and the other dependencies on I are not checked
+    further (they would report a missing or ambiguous I).
   Alternatives: C++26 reflection (`bases_of`) would let keel enumerate the bases and check
   every `Provides<>`; a CRTP marker (`Provides<I, Self>`) could check itself but is
   heavier to write.

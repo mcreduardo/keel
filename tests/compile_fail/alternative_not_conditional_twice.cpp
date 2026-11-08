@@ -9,7 +9,8 @@ struct Queue {
     virtual ~Queue() = default;
 };
 
-class Store : public keel::Component<keel::Alternative<Cache>, keel::Alternative<Queue>>, public Cache, public Queue {};
+class Store : public keel::Component<>, public keel::Alternative<Cache>, public keel::Alternative<Queue>, public Cache,
+              public Queue {};
 
 static_assert(!keel::isValid<Store>, "isValid disagrees with compose");
 

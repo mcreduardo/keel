@@ -182,10 +182,10 @@ struct Tracing;  // never composed
 
 class Config : public keel::Component<> {};
 class Disk : public keel::Component<Config>, public keel::Provides<Storage>, public Storage {};
-class Memory : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+class Memory : public keel::Component<>, public keel::Alternative<Cache>, public Cache, public keel::Conditional {
     bool enabled() const override { return true; }
 };
-class Redis : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+class Redis : public keel::Component<>, public keel::Alternative<Cache>, public Cache, public keel::Conditional {
     bool enabled() const override { return false; }
 };
 class Migrations : public keel::Component<> {};
@@ -295,6 +295,8 @@ TEST(to_dot_shows_the_interfaces_something_refers_to) {
     CHECK((labels(keel::compose<Reader, FastFlash>().toDot()) ==
            std::vector<std::string>{"intro::FastFlash\nprovides intro::Storage", "intro::Reader", "intro::Storage"}));
     CHECK((labels(keel::compose<Flash>().toDot()) == std::vector<std::string>{"intro::Flash"}));
+    // An alternative of an interface nothing refers to is shown without "alternative".
+    CHECK((labels(keel::compose<Memory>().toDot()) == std::vector<std::string>{"intro::Memory"}));
     // keel::InitAfter<Gauge> refers to Gauge too.
     CHECK((labels(keel::compose<AfterFlash, Flash>().toDot()) ==
            std::vector<std::string>{"intro::Flash\nprovides intro::Gauge", "intro::AfterFlash", "intro::Gauge"}));

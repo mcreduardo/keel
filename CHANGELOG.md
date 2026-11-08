@@ -25,17 +25,23 @@ First release: a single C++20 header, standard library only, no RTTI.
   the way down); a failed `init()` or `start()` rolls back and rethrows; `stop()` and
   `deinit()` are `noexcept`. `App::run`, `keel::run` and member-function entry points.
 - Interfaces: `keel::Provides<I>`, a base class a component derives from (next to
-  `keel::Component<...>`, which lists only dependencies), with ambiguity reported at
-  compile time and access to interfaces from the app. keel asks each component about the
-  interfaces something refers to; a `Provides<I>` that nothing refers to is not checked.
-  Listing it in `keel::Component<...>` (`ProvidesAsDependency`), deriving from it
-  privately or twice (`InaccessibleProvides`), next to `keel::Alternative<I>`
-  (`ProvidesAndAlternative`), and an `I` no dependency could name (`Provides<const I>`) are
-  compile errors.
+  `keel::Component<...>`, which lists dependencies and the `AsyncInit`/`AsyncStart`
+  markers), with ambiguity reported at compile time and access to interfaces from the app.
+  keel asks each component about the interfaces something refers to; a `Provides<I>` that
+  nothing refers to is not checked. Listing it in `keel::Component<...>`
+  (`ProvidesAsDependency`), deriving from it privately or twice (`InaccessibleProvides`),
+  next to `keel::Alternative<I>` (`ProvidesAndAlternative`), and an `I` no dependency could
+  name (`Provides<const I>`) are compile errors.
 - Collections: `keel::All<I>` and `keel::Optional<keel::All<I>>`, with `getAll<I>()`.
 - Decisions at runtime: `keel::Conditional`, an opt-in base class whose `enabled()` lets
-  configuration turn a component off, and `keel::Alternative<I>` (each one a
-  `keel::Conditional`) to choose one of several implementations. Nothing may require a
+  configuration turn a component off, and `keel::Alternative<I>`, a base class like
+  `keel::Provides<I>` (each component also a `keel::Conditional`), to choose one of several
+  implementations. Like `Provides<I>`, it is checked only for an I something refers to.
+  Listing it in `keel::Component<...>` (`AlternativeAsDependency`), deriving from it
+  privately or twice (`InaccessibleAlternative`), and `Alternative<const I>` (an error where
+  the component is constructed) are compile errors; an alternative that isn't a
+  `keel::Conditional` is `AlternativeNotConditional<C>`, checked whether or not something
+  refers to its interface. Nothing may require a
   conditional component except through `Alternative<I>`: `RequiredConditional`,
   `RequiredConditionalProvider`, `OnlyConditionalProviders` and `RunTargetConditional` are
   compile errors. So the only composition failures left to runtime are an

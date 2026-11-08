@@ -6,7 +6,8 @@ struct HealthCheck {
     virtual ~HealthCheck() = default;
 };
 
-class AllChecks : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>, public HealthCheck {};
+class AllChecks : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>,
+                  public HealthCheck {};
 
 static_assert(!keel::isValid<AllChecks>, "isValid disagrees with compose");
 

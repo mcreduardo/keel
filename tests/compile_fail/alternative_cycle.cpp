@@ -7,10 +7,11 @@ struct Cache {
 };
 
 class Repository : public keel::Component<Cache> {};
-class RedisCache : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+class RedisCache : public keel::Component<>, public keel::Alternative<Cache>, public Cache, public keel::Conditional {
     bool enabled() const override { return true; }
 };
-class MemoryCache : public keel::Component<Repository, keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+class MemoryCache : public keel::Component<Repository>, public keel::Alternative<Cache>, public Cache,
+                    public keel::Conditional {
     bool enabled() const override { return true; }
 };
 

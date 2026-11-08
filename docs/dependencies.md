@@ -2,9 +2,9 @@
 
 [keel](../README.md) › docs › Dependencies and interfaces
 
-What a component **needs** goes in its `keel::Component<...>` list, along with
-`keel::Alternative<I>`, `keel::AsyncInit` and `keel::AsyncStart`. The interfaces it
-**implements** are base classes, `keel::Provides<I>`:
+What a component **needs** goes in its `keel::Component<...>` list, along with the markers
+`keel::AsyncInit` and `keel::AsyncStart`. The interfaces it **implements** are base
+classes, `keel::Provides<I>` or `keel::Alternative<I>`:
 
 | You write | Meaning | Access |
 |---|---|---|
@@ -13,12 +13,12 @@ What a component **needs** goes in its `keel::Component<...>` list, along with
 | `keel::InitAfter<T>` | **Ordering only.** Come after `T` if `T` is composed. | none |
 | `keel::All<I>` | **Every** provider of `I`, **at least one**. | `getAll<I>()` returns `std::vector<I*>`, never empty |
 | `keel::Optional<keel::All<I>>` | Every provider of `I`, **possibly none**. | `getAll<I>()`, possibly empty |
-| `keel::Alternative<I>` | **One of several** implementations of `I`, chosen at runtime (with `keel::Conditional`). | others depend on plain `I`; see [Decisions at runtime](runtime-decisions.md#keelalternativei-implementations-that-are-components-of-their-own) |
 | `keel::AsyncInit`, `keel::AsyncStart` | Run this component's `init()` / `start()` on a thread of its own. | see [Async startup](async.md) |
 
 | You derive from | Meaning | Effect |
 |---|---|---|
 | `public keel::Provides<I>` | This component **implements the interface `I`**. | others can depend on `I` |
+| `public keel::Alternative<I>` | **One of several** implementations of `I`, chosen at runtime (with `keel::Conditional`). | others depend on plain `I`; see [Decisions at runtime](runtime-decisions.md#keelalternativei-implementations-that-are-components-of-their-own) |
 | `public keel::Conditional` | Configuration may turn it off. | see [Decisions at runtime](runtime-decisions.md#keelconditional-a-component-that-may-be-off) |
 
 "Comes first" means constructed and initialized before this component, and deinitialized
@@ -121,12 +121,14 @@ auto app = keel::compose<Service, DiskStorage, Config>();
   `NotDerivedFromInterface<C, I>`), and from each `keel::Provides<I>` publicly and once
   (else `InaccessibleProvides<C, I>`; `class` bases are private by default).
 - `keel::Provides<I>` is not a list entry: listing it in `keel::Component<...>` is
-  `ProvidesAsDependency<C, I>`. The list says what a component needs, its bases what it
-  is.
+  `ProvidesAsDependency<C, I>` (and `keel::Alternative<I>` there is
+  `AlternativeAsDependency<C, I>`). The list says what a component needs, its bases what
+  it is.
 - keel finds out what a component provides by asking: "does `C` provide `I`?", for each
   `I` that something refers to (a dependency of a composed component, or the root's
   `getComponent<I>()` or `run(&I::f)`). C++20 can't list a class's base classes. So a
-  `keel::Provides<I>` that nothing refers to has no effect: it isn't checked, and
+  `keel::Provides<I>` or `keel::Alternative<I>` that nothing refers to has no effect: it
+  isn't checked (except that an alternative must be a `keel::Conditional`), and
   [`App::toDot()`](inspection-and-testing.md) doesn't show it.
 
 This is how you swap implementations without touching the components that use them:
@@ -136,7 +138,7 @@ production composes `DiskStorage`, a test composes `FakeStorage` (see
 ### Dependencies match by exact type
 
 A dependency on `T` resolves to the component `T`, or to the one that derives from
-`Provides<T>` (or lists `Alternative<T>`). Nothing else: keel doesn't look for a class that
+`Provides<T>` (or `Alternative<T>`). Nothing else: keel doesn't look for a class that
 happens to derive from `T`. When one does, that is almost always a forgotten
 `Provides<T>`, so keel reports it:
 

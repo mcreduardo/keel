@@ -334,11 +334,11 @@ struct Cache {
 };
 bool redisWanted = false;
 
-class Redis : public Logged<keel::Alternative<Cache>, keel::AsyncInit>, public Cache, public keel::Conditional {
+class Redis : public Logged<keel::AsyncInit>, public keel::Alternative<Cache>, public Cache, public keel::Conditional {
     bool enabled() const override { return redisWanted; }
     std::string_view kind() const override { return "redis"; }
 };
-class Memory : public Logged<keel::Alternative<Cache>, keel::AsyncInit>, public Cache, public keel::Conditional {
+class Memory : public Logged<keel::AsyncInit>, public keel::Alternative<Cache>, public Cache, public keel::Conditional {
     bool enabled() const override { return !redisWanted; }
     std::string_view kind() const override { return "memory"; }
 };

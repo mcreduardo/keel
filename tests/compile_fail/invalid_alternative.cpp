@@ -5,9 +5,13 @@ struct Cache {
     virtual ~Cache() = default;
 };
 
-class RedisCache : public keel::Component<keel::Alternative<const Cache>>, public Cache {};
+class RedisCache : public keel::Component<>, public keel::Alternative<const Cache>, public Cache,
+                   public keel::Conditional {
+    bool enabled() const override { return true; }
+};
 
-static_assert(!keel::isValid<RedisCache>, "isValid disagrees with compose");
+// Rejected where the component is constructed; isValid doesn't see construction.
+static_assert(keel::isValid<RedisCache>, "isValid disagrees with compose");
 
 int main() {
     auto app = keel::compose<RedisCache>();

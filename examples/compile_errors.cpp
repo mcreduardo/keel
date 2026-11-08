@@ -2,7 +2,7 @@
 // Each gives exactly one error, naming the mistake and the types involved. docs/errors.md
 // explains each one and its fix.
 //
-// Build: c++ -std=c++20 -I.. -fsyntax-only -DKEEL_ERROR=6 compile_errors.cpp   (1..44)
+// Build: c++ -std=c++20 -I.. -fsyntax-only -DKEEL_ERROR=6 compile_errors.cpp   (1..46)
 // Without KEEL_ERROR it compiles and does nothing.
 //
 //   The compose<...> list            Interfaces and collections
@@ -17,17 +17,19 @@
 //     7 DependencyCycle                42 ProvidesAsDependency
 //     8 InvalidDependency              43 InaccessibleProvides
 //     9 BundleAsDependency             44 ProvidesAndAlternative
-//    10 MisplacedAsync
-//    11 a dependency listed twice    Inside a component
-//                                      20 getComponent<T>() on an undeclared T
-//   The composition root               21 getComponent<T>() on keel::Optional<T>
-//    27 NotInApp                       22 getComponent<T>() on keel::InitAfter<T>
-//    28 AmbiguousInterface             23 findComponent<T>() on a required T
-//    29 RunTargetNotComposed           24 getAll<I>() on a required I
-//    30 RunTargetAmbiguous             25 getComponent<keel::AsyncInit>()
-//    31 RunTargetNotCallable           26 stop() without noexcept
-//    32 RunNotCallable
-//    33 NotAnApp                     Guards
+//    10 MisplacedAsync                 45 AlternativeAsDependency
+//    11 a dependency listed twice      46 InaccessibleAlternative
+//
+//   The composition root             Inside a component
+//    27 NotInApp                       20 getComponent<T>() on an undeclared T
+//    28 AmbiguousInterface             21 getComponent<T>() on keel::Optional<T>
+//    29 RunTargetNotComposed           22 getComponent<T>() on keel::InitAfter<T>
+//    30 RunTargetAmbiguous             23 findComponent<T>() on a required T
+//    31 RunTargetNotCallable           24 getAll<I>() on a required I
+//    32 RunNotCallable                 25 getComponent<keel::AsyncInit>()
+//    33 NotAnApp                       26 stop() without noexcept
+//
+//                                    Guards
 //                                      34 requireValid (reports the mistake itself)
 //
 //                                    Conditional components
@@ -116,7 +118,8 @@ class Service : public keel::Component<Storage> {};
 void mistake() { keel::compose<Service, DiskStorage, MemoryStorage>(); }
 
 #elif KEEL_ERROR == 14  // keel::Alternative<I> mixed with keel::Provides<I>
-class S3Storage : public keel::Component<keel::Alternative<Storage>>, public Storage, public keel::Conditional {
+class S3Storage : public keel::Component<>, public keel::Alternative<Storage>, public Storage,
+                  public keel::Conditional {
     bool enabled() const override { return true; }
 };
 class Service : public keel::Component<Storage> {};
@@ -275,14 +278,15 @@ void mistake() { keel::compose<Service, S3Storage>(); }
 struct HealthCheck {
     virtual ~HealthCheck() = default;
 };
-class DiskCheck : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck, public keel::Conditional {
+class DiskCheck : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck,
+                  public keel::Conditional {
     bool enabled() const override { return true; }
 };
 class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {};
 void mistake() { keel::compose<HealthEndpoint, DiskCheck>(); }
 
 #elif KEEL_ERROR == 38  // keel::Alternative<I> without keel::Conditional
-class S3Storage : public keel::Component<keel::Alternative<Storage>>, public Storage {};
+class S3Storage : public keel::Component<>, public keel::Alternative<Storage>, public Storage {};
 void mistake() { keel::compose<S3Storage>(); }
 
 #elif KEEL_ERROR == 39  // keel::Conditional as a private base (the default for a class)
@@ -321,13 +325,29 @@ class Service : public keel::Component<Storage> {};
 void mistake() { keel::compose<Service, S3Storage>(); }
 
 #elif KEEL_ERROR == 44  // keel::Provides<I> and keel::Alternative<I> on one component
-class S3Storage : public keel::Component<keel::Alternative<Storage>>,
+class S3Storage : public keel::Component<>,
+                  public keel::Alternative<Storage>,
                   public keel::Provides<Storage>,
                   public Storage,
                   public keel::Conditional {
     bool enabled() const override { return true; }
 };
-void mistake() { keel::compose<S3Storage>(); }
+class Service : public keel::Component<Storage> {};
+void mistake() { keel::compose<Service, S3Storage>(); }
+
+#elif KEEL_ERROR == 45  // keel::Alternative<I> listed as a dependency instead of inherited
+class S3Storage : public keel::Component<keel::Alternative<Storage>>, public Storage, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class Service : public keel::Component<Storage> {};
+void mistake() { keel::compose<Service, S3Storage>(); }
+
+#elif KEEL_ERROR == 46  // keel::Alternative<I> as a private base (the default for a class)
+class S3Storage : public keel::Component<>, keel::Alternative<Storage>, public Storage, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class Service : public keel::Component<Storage> {};
+void mistake() { keel::compose<Service, S3Storage>(); }
 
 #endif
 

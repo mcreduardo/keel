@@ -183,7 +183,8 @@ TEST(get_all_from_a_constructor_throws) {
 
 namespace {
 
-class AllChecks : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>, public HealthCheck {
+class AllChecks : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>,
+                  public HealthCheck {
 public:
     std::string name() const override {
         std::string out = "all of";

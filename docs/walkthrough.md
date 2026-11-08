@@ -116,7 +116,7 @@ struct Storage {
     virtual void put(const std::string& key, const std::string& value) = 0;
 };
 
-class MemoryStorage : public keel::Component<Config, keel::Alternative<Storage>>, public Storage,
+class MemoryStorage : public keel::Component<Config>, public keel::Alternative<Storage>, public Storage,
                       public keel::Conditional {
 public:
     void put(const std::string& key, const std::string& value) override { data_[key] = value; }
@@ -126,7 +126,7 @@ private:
     std::map<std::string, std::string> data_;
 };
 
-class DatabaseStorage : public keel::Component<Config, Database, keel::Alternative<Storage>>, public Storage,
+class DatabaseStorage : public keel::Component<Config, Database>, public keel::Alternative<Storage>, public Storage,
                         public keel::Conditional {
 public:
     void put(const std::string& key, const std::string& value) override { database_->query("put " + key + "=" + value); }

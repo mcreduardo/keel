@@ -7,7 +7,8 @@ struct HealthCheck {
 };
 
 class Local : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>, public HealthCheck {};
-class Remote : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>, public HealthCheck {};
+class Remote : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>,
+               public HealthCheck {};
 
 static_assert(!keel::isValid<Local, Remote>, "isValid disagrees with compose");
 

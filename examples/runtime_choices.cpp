@@ -73,7 +73,8 @@ struct Cache {
     virtual const char* kind() const = 0;
 };
 
-class RedisCache : public keel::Component<Flags, keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+class RedisCache : public keel::Component<Flags>, public keel::Alternative<Cache>, public Cache,
+                   public keel::Conditional {
 public:
     const char* kind() const override { return "redis"; }
 
@@ -82,7 +83,8 @@ private:
     bool enabled() const override { return getComponent<Flags>().redis; }
 };
 
-class MemoryCache : public keel::Component<Flags, keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+class MemoryCache : public keel::Component<Flags>, public keel::Alternative<Cache>, public Cache,
+                    public keel::Conditional {
 public:
     const char* kind() const override { return "memory"; }
 

@@ -45,12 +45,28 @@ class TwiceListedProvides : public keel::Component<keel::Provides<Storage>, keel
 static_assert(!keel::isValid<Config, Logger, TwiceLogger>);
 static_assert(!keel::isValid<TwiceListedProvides>);
 
-// keel::Provides<I> is a base class: listed, it is an error; next to keel::Alternative<I> too.
+// keel::Provides<I> and keel::Alternative<I> are base classes: listed, they are errors.
 class ListedProvides : public keel::Component<keel::Provides<Storage>>, public Storage {};
-class ProvidesAndAlternative : public keel::Component<keel::Alternative<Storage>>, public keel::Provides<Storage>,
-                               public Storage {};
+class ListedAlternative : public keel::Component<keel::Alternative<Storage>>, public Storage, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
 static_assert(!keel::isValid<ListedProvides>);
-static_assert(!keel::isValid<ProvidesAndAlternative>);
+static_assert(!keel::isValid<ListedAlternative>);
+
+// Both bases for one interface: checked when something refers to it.
+class ProvidesAndAlternative : public keel::Component<>, public keel::Alternative<Storage>,
+                               public keel::Provides<Storage>, public Storage, public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class PrivateAlternative : public keel::Component<>, keel::Alternative<Storage>, public Storage,
+                           public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class MaybeStorageUser : public keel::Component<keel::Optional<Storage>> {};
+static_assert(keel::isValid<ProvidesAndAlternative>);
+static_assert(!keel::isValid<MaybeStorageUser, ProvidesAndAlternative>);
+static_assert(keel::isValid<PrivateAlternative>);
+static_assert(!keel::isValid<MaybeStorageUser, PrivateAlternative>);
 
 // Missing dependency.
 static_assert(!keel::isValid<Logger, Server>);
@@ -100,10 +116,10 @@ class UsesSelfProvidingClock : public keel::Component<SelfProvidingClock> {};
 static_assert(!keel::isValid<UsesClock, FakeClock>);
 static_assert(keel::isValid<UsesSelfProvidingClock, FakeSelfProvidingClock>);
 
-class RedisCache : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+class RedisCache : public keel::Component<>, public keel::Alternative<Cache>, public Cache, public keel::Conditional {
     bool enabled() const override { return true; }
 };
-class MemoryCache : public keel::Component<keel::Alternative<Cache>>, public Cache, public keel::Conditional {
+class MemoryCache : public keel::Component<>, public keel::Alternative<Cache>, public Cache, public keel::Conditional {
     bool enabled() const override { return false; }
 };
 class PlainCache : public keel::Component<>, public keel::Provides<Cache>, public Cache {};
@@ -111,7 +127,7 @@ class UsesCache : public keel::Component<Cache> {};
 class MaybeCache : public keel::Component<keel::Optional<Cache>> {};
 class AnyCaches : public keel::Component<keel::Optional<keel::All<Cache>>> {};
 class AllCaches : public keel::Component<keel::All<Cache>> {};
-class UnconditionalCache : public keel::Component<keel::Alternative<Cache>>, public Cache {};
+class UnconditionalCache : public keel::Component<>, public keel::Alternative<Cache>, public Cache {};
 static_assert(keel::isValid<UsesCache, RedisCache, MemoryCache>);
 static_assert(keel::isValid<MaybeCache, RedisCache, MemoryCache>);
 static_assert(keel::isValid<AnyCaches, RedisCache, MemoryCache>);
@@ -119,7 +135,16 @@ static_assert(!keel::isValid<AllCaches, RedisCache, MemoryCache>);  // every pro
 static_assert(keel::isValid<AllCaches, RedisCache, PlainCache>);    // PlainCache is always there
 static_assert(!keel::isValid<UsesCache, RedisCache, PlainCache>);
 static_assert(keel::isValid<RedisCache, PlainCache>);  // nothing needs one Cache
-static_assert(!keel::isValid<UnconditionalCache>);
+// An alternative of keel::Conditional itself, next to a dependency on keel::Conditional:
+// the passed checks of the two are distinct (isValid and compose agree).
+class AlternativeOfConditional : public keel::Component<>, public keel::Alternative<keel::Conditional>,
+                                 public keel::Conditional {
+    bool enabled() const override { return true; }
+};
+class UsesConditional : public keel::Component<keel::Conditional> {};
+static_assert(keel::isValid<AlternativeOfConditional, UsesConditional>);
+static_assert(keel::requireValid<AlternativeOfConditional, UsesConditional>);
+static_assert(!keel::isValid<UnconditionalCache>);  // even though nothing refers to Cache
 
 // Conditional components: nothing may require one.
 class Uplink : public keel::Component<Config>, public keel::Conditional {
@@ -131,7 +156,8 @@ class AfterUplink : public keel::Component<keel::InitAfter<Uplink>> {};
 class ConditionalNeedsUplink : public keel::Component<Uplink>, public keel::Conditional {
     bool enabled() const override { return true; }
 };
-class ConditionalDisk : public keel::Component<>, public keel::Provides<Storage>, public Storage, public keel::Conditional {
+class ConditionalDisk : public keel::Component<>, public keel::Provides<Storage>, public Storage,
+                        public keel::Conditional {
     bool enabled() const override { return true; }
 };
 class PrivateConditional : public keel::Component<>, keel::Conditional {
@@ -198,7 +224,8 @@ static_assert(!keel::isValid<Config, NestedOptional>);
 // Collections.
 class DatabaseCheck : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck {};
 class LeftOutCheck : public keel::Component<>, public HealthCheck {};
-class ConditionalCheck : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck, public keel::Conditional {
+class ConditionalCheck : public keel::Component<>, public keel::Provides<HealthCheck>, public HealthCheck,
+                         public keel::Conditional {
     bool enabled() const override { return true; }
 };
 class AllChecks : public keel::Component<keel::All<HealthCheck>> {};
@@ -247,7 +274,7 @@ public:
     using Entries = int;
     using RequiredDependencies = keel::Bundle<>;
     using ListedProvides = void;
-    using AlternativeInterfaces = void;
+    using ListedAlternatives = void;
     [[maybe_unused]] static constexpr bool uniqueEntries = false;
 };
 static_assert(keel::isValid<Config, OwnNames, UsesStorage>);
