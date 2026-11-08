@@ -118,7 +118,7 @@ right, so init order reads right to left.
 
 - required dependencies are plain arrows;
 - `Optional` is dashed;
-- `InitAfter` is dotted, with an open head;
+- `After` is dotted, with an open head;
 - `All` is bold, `Optional<All>` bold and dashed;
 - an arrow that resolves through an interface is labelled with the interface;
 - two entries that resolve to the same component (`T`, and an interface `T` provides) give

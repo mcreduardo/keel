@@ -1,10 +1,10 @@
-// Must not compile: Server lists Logger both as required and as InitAfter. The
+// Must not compile: Server lists Logger both as required and as After. The
 // getComponent<Logger>() call is fine; the duplicate is the one error.
 #include <keel.hpp>
 
 class Logger : public keel::Component<> {};
 
-class Server : public keel::Component<Logger, keel::InitAfter<Logger>> {
+class Server : public keel::Component<Logger, keel::After<Logger>> {
     void init() override { getComponent<Logger>(); }
 };
 

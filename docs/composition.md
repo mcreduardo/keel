@@ -15,7 +15,7 @@ components, duplicates, missing and ambiguous dependencies, cycles, and the rest
 dependency graph:
 
 - **Each component comes after everything it depends on**: required dependencies,
-  `Optional<T>` and `InitAfter<T>` when `T` is composed, every provider of an `All<I>`, and,
+  `Optional<T>` and `After<T>` when `T` is composed, every provider of an `All<I>`, and,
   for a dependency on an interface `I` with `Alternative<I>` providers, every alternative.
 - **Components that don't depend on each other keep the order of the list.** Without
   [async components](async.md), the order is fully determined by the graph and the list,

@@ -24,18 +24,18 @@
   involved; keel never reorders the list.
 
 - **A component that derives from T without `Provides<T>` is a compile error.** If a
-  component depends on T (required, `Optional<T>` or `InitAfter<T>`), nothing composed is or
+  component depends on T (required, `Optional<T>` or `After<T>`), nothing composed is or
   provides T, and a composed component derives from T, keel reports
   `UndeclaredProvider<Component, T, Derived>` instead of a missing dependency (required) or
-  a silent nullptr / no ordering (Optional, InitAfter). Alternatives: resolve T to the
+  a silent nullptr / no ordering (Optional, After). Alternatives: resolve T to the
   derived component automatically; or keep ignoring it. Chosen because dependencies match
   by exact type or declared `Provides<T>`, one rule, and the silent cases hid the mistake.
   Cost: a composition that derives from T on purpose without providing it must add
   `Provides<T>` or not depend on T. When T is itself a component (`FakeClock : Clock`), the
   error is `UndeclaredSubclass<C, T, Derived>`: compose T, or let T provide itself
   (`Clock : Component<>, Provides<Clock>`), which its subclasses inherit. Still silent: an
-  `InitAfter<T>`/`Optional<T>` whose T nothing composed derives from
-  (`InitAfter<std::string>`, or a forgotten compose), and an I that a composed class derives
+  `After<T>`/`Optional<T>` whose T nothing composed derives from
+  (`After<std::string>`, or a forgotten compose), and an I that a composed class derives
   from twice (non-virtual diamond: not convertible, so no UndeclaredProvider, and
   `Optional<I>` stays nullptr).
   For `All<I>` and `Optional<All<I>>` a similar check runs even when I has providers:
@@ -47,16 +47,16 @@
   that lists `All<I>` and derives from I without providing it is accepted (and not in its
   own list).
 
-- **`InitAfter<I>` with several providers orders after all of them.** A required or
+- **`After<I>` with several providers orders after all of them.** A required or
   `Optional<I>` dependency with two providers is an ambiguity error
-  (`AmbiguousDependency`), but `InitAfter<I>` is ordering only and gives no access, so "after
+  (`AmbiguousDependency`), but `After<I>` is ordering only and gives no access, so "after
   every provider" is well defined. Alternative: report it as ambiguous too, for one rule.
 
 - **Providing and depending on the same interface.** `C : Component<I>, Provides<I>` is
   reported as `DependencyCycle<TypeList<C>>` (one provider) or `AmbiguousDependency` (more),
   not with its own message. Alternative: a dedicated check ("C provides I and depends on
   I"). Not done: the existing errors name the type, and the case looks rare.
-  `C : Component<InitAfter<I>>, Provides<I>` is fine: it orders after the other providers of I (a decorator or chain).
+  `C : Component<After<I>>, Provides<I>` is fine: it orders after the other providers of I (a decorator or chain).
   The same holds for `Alternative<I>`: an alternative that depends on I is ordered after
   every alternative, itself included, so it is `DependencyCycle<TypeList<C>>`. And an
   alternative that needs a dependent of I is on a cycle with it (compile-fail test
@@ -162,13 +162,13 @@
 - **`All<I>` leaves out the component itself.** A component that provides I and lists
   `All<I>` (a composite: a HealthCheck that checks all the others) gets every other
   provider, and is ordered after them; "at least one" counts the others. Same rule as
-  `InitAfter<I>`. Alternative: report it as a cycle, like `C : Component<I>, Provides<I>`.
+  `After<I>`. Alternative: report it as a cycle, like `C : Component<I>, Provides<I>`.
   Not obvious consequences, reported only as `DependencyCycle<...>`: two composites of the
   same I each come after the other (compile-fail test `two_composites`); and a subclass of
   a composite (`Y : X` with `X : Component<All<I>>, Provides<I>`) inherits both, so
   X and Y each come after the other. A dedicated message could explain these.
 
-- **One entry per type, collections included.** T, `Optional<T>`, `InitAfter<T>`, `All<T>`
+- **One entry per type, collections included.** T, `Optional<T>`, `After<T>`, `All<T>`
   and `Optional<All<T>>` all name T, so listing two of them is the duplicate error. Each
   entry decides the one accessor (getComponent, findComponent, getAll). Alternative: allow
   combinations such as `T, All<T>`; none adds anything the single entries can't express.
@@ -180,7 +180,7 @@
 
 - **`All<Optional<I>>` is `MisnestedAll<C, I>`.** The accessors skip their checks for that
   I, so a getComponent/findComponent/getAll on it adds no second error. Other nestings
-  (`All<const I>`, `All<InitAfter<I>>`, `Optional<All<Optional<I>>>`) are
+  (`All<const I>`, `All<After<I>>`, `Optional<All<Optional<I>>>`) are
   `InvalidDependency<C, Entry>`.
 
 - **No `App::getAll<I>()` at the composition root.** The root gets one component by type;
@@ -228,7 +228,7 @@
   `EmptyComposition<>`.
 
 - **A bundle is not a dependency.** Any entry naming a bundle (`Component<Core>`,
-  `Optional<Core>`, `InitAfter<Core>`, `All<Core>`) is
+  `Optional<Core>`, `After<Core>`, `All<Core>`) is
   `BundleAsDependency<C, Bundle<...>>`: list the components used. Alternative: treat it as
   "depends on each of them". Not done: a component should name what it uses, and the
   bundle's contents may change without the component noticing.
@@ -278,10 +278,10 @@
 
 - **`App::toDot()` draws the ordering edges.** One arrow per edge the init order is derived
   from, from the dependent to the dependency, styled by entry kind (required plain,
-  `Optional` dashed, `InitAfter` dotted with an open head, `All` bold, `Optional<All>` bold
+  `Optional` dashed, `After` dotted with an open head, `All` bold, `Optional<All>` bold
   and dashed),
   labelled with the interface when it resolves through one. A dependency on an interface
-  with alternatives draws one arrow per alternative; an absent `Optional<T>`/`InitAfter<T>`
+  with alternatives draws one arrow per alternative; an absent `Optional<T>`/`After<T>`
   draws nothing. Nodes list the provided interfaces ("provides I", "alternative I"); after
   `init()`, disabled ones are gray and marked "(disabled)", with their arrows. Node ids are
   list positions (`n3`), labels are escaped (`"` and `\`). Built at runtime from
@@ -412,3 +412,9 @@
   an error when `AsyncInit`/`AsyncStart` reaches a component only through a non-component
   base. Not done yet: it may be intended (a family of slow drivers), and the check needs a
   way to tell "inherited from a component" from "inherited from an interface". Open.
+
+- **`After<T>` stays a list entry** (2026-11-08). It orders
+  construction and destruction too, so the name says "after", not "init after". It is a
+  dependency edge, so it belongs in the `Component<...>` list; as a base class, an
+  `After<I>` on an interface nothing else refers to would be dropped silently. Alternative:
+  `OrderAfter<T>` or `Before<T>` on the other side. Revisitable before 0.1.0.

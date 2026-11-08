@@ -11,7 +11,7 @@ What a component **needs** goes in its `keel::Component<...>` list, and only tha
 |---|---|---|
 | `T` | **Required.** `T` must be composed; it comes first. | `getComponent<T>()` returns `T&` |
 | `keel::Optional<T>` | **Optional.** Used if composed; it comes first if so. | `findComponent<T>()` returns `T*`, `nullptr` if absent or disabled |
-| `keel::InitAfter<T>` | **Ordering only.** Come after `T` if `T` is composed. | none |
+| `keel::After<T>` | **Ordering only.** Come after `T` if `T` is composed. | none |
 | `keel::All<I>` | **Every** provider of `I`, **at least one**. | `getAll<I>()` returns `std::vector<I*>`, never empty |
 | `keel::Optional<keel::All<I>>` | Every provider of `I`, **possibly none**. | `getAll<I>()`, possibly empty |
 
@@ -25,7 +25,7 @@ What a component **needs** goes in its `keel::Component<...>` list, and only tha
 "Comes first" means constructed and initialized before this component, and deinitialized
 and destroyed after it.
 
-**One entry per type.** `T`, `Optional<T>`, `InitAfter<T>`, `All<T>` and
+**One entry per type.** `T`, `Optional<T>`, `After<T>`, `All<T>` and
 `Optional<All<T>>` all name `T`, so two of them in one list is an error. Each entry has
 exactly one accessor, and the wrong one is a compile error that names the right one:
 `getComponent<T>()` on an `Optional<T>` says to use `findComponent<T>()`.
@@ -65,7 +65,7 @@ If `Metrics` is composed, it comes before `HttpServer`. If it isn't, or if it is
 `keel::Conditional` that is disabled at runtime, `findComponent` returns `nullptr` and the
 application runs without it.
 
-## Ordering only: `keel::InitAfter<T>`
+## Ordering only: `keel::After<T>`
 
 For "must come after, but doesn't use it". The server must not start before the database
 migrations have run, but it never calls the migrations component:
@@ -75,15 +75,15 @@ class Migrations : public keel::Component<Database> {
     void init() override;  // runs the schema migrations
 };
 
-class HttpServer : public keel::Component<Router, keel::InitAfter<Migrations>> {
+class HttpServer : public keel::Component<Router, keel::After<Migrations>> {
     void start() override;  // listen: only after Migrations::init() has run
 };
 ```
 
-`InitAfter<T>` gives no access (`getComponent<Migrations>()` doesn't compile; the error
-says to replace `InitAfter<Migrations>` with `Migrations`). It orders construction and
+`After<T>` gives no access (`getComponent<Migrations>()` doesn't compile; the error
+says to replace `After<Migrations>` with `Migrations`). It orders construction and
 destruction too. If `T` isn't composed, nothing happens, like systemd's `After=`. For an
-interface `I`, `InitAfter<I>` comes after every provider of `I`.
+interface `I`, `After<I>` comes after every provider of `I`.
 
 ## Interfaces: `keel::Provides<I>`
 
@@ -150,7 +150,7 @@ class Server : public keel::Component<Metrics> {};
 keel::compose<Server, PrometheusMetrics>();  // UndeclaredProvider<Server, Metrics, PrometheusMetrics>
 ```
 
-The same applies to `Optional<T>` and `InitAfter<T>`, which would otherwise silently find
+The same applies to `Optional<T>` and `After<T>`, which would otherwise silently find
 nothing.
 
 ### Substituting a subclass for a component

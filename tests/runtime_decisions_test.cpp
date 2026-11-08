@@ -365,7 +365,7 @@ private:
 // Lists keel::Optional<Cache> but never looks it up: init() still checks it.
 class Unused : public keel::Component<keel::Optional<Cache>> {};
 
-class Warmup : public keel::Component<keel::InitAfter<Cache>> {
+class Warmup : public keel::Component<keel::After<Cache>> {
     void init() override { events.push_back("init Warmup"); }
 };
 

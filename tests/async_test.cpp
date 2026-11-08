@@ -367,7 +367,7 @@ private:
         plugins = getAll<Plugin>().size();
     }
 };
-class Late : public Logged<keel::InitAfter<Menu>>, public keel::AsyncInit {};
+class Late : public Logged<keel::After<Menu>>, public keel::AsyncInit {};
 class Draft : public Logged<>, public keel::AsyncInit, public keel::Provides<Plugin>, public Plugin,
               public keel::Conditional {
     bool enabled() const override { return false; }
@@ -414,7 +414,7 @@ TEST(async_components_choose_among_alternatives) {
     });
 }
 
-TEST(all_and_init_after_order_async_components) {
+TEST(all_and_after_order_async_components) {
     inRounds([] {
         auto app = keel::compose<edges::Late, edges::Menu, edges::Spell, edges::Grammar>();
         app.init();

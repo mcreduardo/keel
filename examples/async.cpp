@@ -60,7 +60,7 @@ class AuditLog : public keel::Component<Logger> {
 };
 
 // Reports the Database's pool size, so it comes after it (ordering only).
-class Metrics : public keel::Component<Logger, keel::InitAfter<Database>> {
+class Metrics : public keel::Component<Logger, keel::After<Database>> {
     void init() override { getComponent<Logger>().step(componentName(), "init", 20); }
 };
 

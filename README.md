@@ -91,7 +91,7 @@ The `Component<...>` list says what a component needs; what it is (`Provides<I>`
 match the declaration.
 
 ```cpp
-class HttpServer : public keel::Component<Router, Logger, keel::Optional<Metrics>, keel::InitAfter<Migrations>> {
+class HttpServer : public keel::Component<Router, Logger, keel::Optional<Metrics>, keel::After<Migrations>> {
     void init() override {
         router_ = &getComponent<Router>();     // Router&: always there
         metrics_ = findComponent<Metrics>();   // Metrics*: nullptr if not composed or disabled
@@ -141,7 +141,7 @@ in about 1 s on top of the standard headers (Apple clang 17, `-O0`, Apple M1).
 |---|---|
 | [Getting started](docs/getting-started.md) | installation, a complete program, components, `getComponent`, the composition root |
 | [A whole application](docs/walkthrough.md) | one program that uses the main features, step by step |
-| [Dependencies and interfaces](docs/dependencies.md) | required, `Optional`, `InitAfter`, `Provides`, `All`, `Optional<All>` |
+| [Dependencies and interfaces](docs/dependencies.md) | required, `Optional`, `After`, `Provides`, `All`, `Optional<All>` |
 | [Lifecycle](docs/lifecycle.md) | `init` / `start` / `stop` / `deinit`, guarantees, failures and rollback, `run` |
 | [Composing an application](docs/composition.md) | `compose`, `App`, constructor arguments, `Bundle`, several compositions |
 | [Decisions at runtime](docs/runtime-decisions.md) | choosing an implementation (a factory, or `Alternative`), `Conditional`, turning a feature off |
@@ -161,7 +161,7 @@ top; the CMake build compiles all of them and runs them as tests.
 |---|---|
 | [`compose.cpp`](examples/compose.cpp) | components, `getComponent`, `Optional`, the composition root |
 | [`interfaces.cpp`](examples/interfaces.cpp) | `Provides`, `All`, `Optional<All>`, build variants, a test with fakes |
-| [`lifecycle.cpp`](examples/lifecycle.cpp) | `init`/`start`/`stop`/`deinit`, `InitAfter`, `run`, rollback of a failed start |
+| [`lifecycle.cpp`](examples/lifecycle.cpp) | `init`/`start`/`stop`/`deinit`, `After`, `run`, rollback of a failed start |
 | [`runtime_choices.cpp`](examples/runtime_choices.cpp) | a factory component, `Conditional`, `Alternative`, `keel::run` with a member function |
 | [`async.cpp`](examples/async.cpp) | `AsyncInit`, `AsyncStart`, `setAsync(false)` |
 | [`introspection.cpp`](examples/introspection.cpp) | `initOrder()`, `timings()`, `toDot()` |

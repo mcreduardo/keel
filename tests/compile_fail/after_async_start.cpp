@@ -3,7 +3,7 @@
 
 class Config : public keel::Component<> {};
 
-class Feed : public keel::Component<Config, keel::InitAfter<keel::AsyncStart>> {};
+class Feed : public keel::Component<Config, keel::After<keel::AsyncStart>> {};
 
 static_assert(!keel::isValid<Config, Feed>, "isValid disagrees with compose");
 

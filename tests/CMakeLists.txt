@@ -4,7 +4,7 @@ add_executable(keel_tests
     compose_test.cpp
     lifecycle_test.cpp
     optional_test.cpp
-    init_after_test.cpp
+    after_test.cpp
     run_test.cpp
     interfaces_test.cpp
     all_test.cpp
@@ -88,11 +88,11 @@ keel_compile_fail(find_component_on_required "T is a required dependency; use ge
 keel_compile_fail(nested_optional "InvalidDependency<Server, ?keel::Optional<keel::Optional<Metrics> ?> ?>")
 keel_compile_fail(const_optional "InvalidDependency<Server, ?keel::Optional<const Metrics> ?>")
 keel_compile_fail(optional_cycle "DependencyCycle<keel::detail::TypeList<Store, ?Cache> ?>")
-keel_compile_fail(get_component_on_init_after "T is declared keel::InitAfter<T>, which is ordering only; replace it with T to use T")
-keel_compile_fail(find_component_on_init_after "T is declared keel::InitAfter<T>, which is ordering only; replace it with keel::Optional<T>")
-keel_compile_fail(required_and_init_after "a dependency is listed twice")
-keel_compile_fail(init_after_cycle "DependencyCycle<keel::detail::TypeList<Pool, ?Worker> ?>")
-keel_compile_fail(invalid_init_after "InvalidDependency<Server, ?keel::InitAfter<keel::Optional<Metrics> ?> ?>")
+keel_compile_fail(get_component_on_after "T is declared keel::After<T>, which is ordering only; replace it with T to use T")
+keel_compile_fail(find_component_on_after "T is declared keel::After<T>, which is ordering only; replace it with keel::Optional<T>")
+keel_compile_fail(required_and_after "a dependency is listed twice")
+keel_compile_fail(after_cycle "DependencyCycle<keel::detail::TypeList<Pool, ?Worker> ?>")
+keel_compile_fail(invalid_after "InvalidDependency<Server, ?keel::After<keel::Optional<Metrics> ?> ?>")
 keel_compile_fail(throwing_stop "exception specification")
 keel_compile_fail(run_member_of_non_component "RunTargetNotComposed<Cli, ?int")
 keel_compile_fail(run_member_not_callable "RunTargetNotCallable<int ?\\(.*Cli::\\*\\)\\(int\\)")
@@ -116,7 +116,7 @@ keel_compile_fail(run_broken_provider "NotDerivedFromInterface<MemoryCache, ?Cac
 keel_compile_fail(two_broken_providers "(InaccessibleProvides<DiskStorage, ?Storage>.*NotDerivedFromInterface<MemoryStorage, ?Storage>|NotDerivedFromInterface<MemoryStorage, ?Storage>.*InaccessibleProvides<DiskStorage, ?Storage>)" 2)
 keel_compile_fail(undeclared_provider "UndeclaredProvider<Server, ?Metrics, ?PrometheusMetrics>")
 keel_compile_fail(undeclared_optional_provider "UndeclaredProvider<Server, ?Metrics, ?PrometheusMetrics>")
-keel_compile_fail(undeclared_init_after_provider "UndeclaredProvider<Server, ?Metrics, ?PrometheusMetrics>")
+keel_compile_fail(undeclared_after_provider "UndeclaredProvider<Server, ?Metrics, ?PrometheusMetrics>")
 keel_compile_fail(root_get_ambiguous "AmbiguousInterface<Storage, ?keel::detail::TypeList<DiskStorage, ?MemoryStorage ?> ?>")
 keel_compile_fail(root_get_not_provided "NotInApp<Storage>")
 keel_compile_fail(run_ambiguous_interface "RunTargetAmbiguous<Shell, ?keel::detail::TypeList<Terminal, ?Console ?> ?>")
@@ -136,14 +136,14 @@ keel_compile_fail(get_component_on_all "T is declared keel::All<T> or keel::Opti
 keel_compile_fail(find_component_on_all "T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>")
 keel_compile_fail(get_all_on_required "I is a required dependency \\(one provider\\); use getComponent<I>")
 keel_compile_fail(get_all_on_optional "I is declared keel::Optional<I> \\(at most one provider\\); use findComponent<I>")
-keel_compile_fail(get_all_on_init_after "I is declared keel::InitAfter<I>, which is ordering only; replace it with keel::All<I>")
+keel_compile_fail(get_all_on_after "I is declared keel::After<I>, which is ordering only; replace it with keel::All<I>")
 keel_compile_fail(undeclared_all "getAll<I>\\(\\) requires keel::All<I> or keel::Optional<keel::All<I>>")
 keel_compile_fail(required_and_all "a dependency is listed twice")
 keel_compile_fail(misnested_all_find "MisnestedAll<PluginMenu, ?Plugin>")
 keel_compile_fail(invalid_optional_all "InvalidDependency<PluginMenu, ?keel::Optional<keel::All<keel::Optional<Plugin> ?> ?> ?>")
-keel_compile_fail(init_after_all "InvalidDependency<PluginMenu, ?keel::InitAfter<keel::All<Plugin> ?> ?>")
+keel_compile_fail(after_all "InvalidDependency<PluginMenu, ?keel::After<keel::All<Plugin> ?> ?>")
 keel_compile_fail(all_and_optional_all "a dependency is listed twice")
-keel_compile_fail(init_after_and_all "a dependency is listed twice")
+keel_compile_fail(after_and_all "a dependency is listed twice")
 keel_compile_fail(two_composites "DependencyCycle<keel::detail::TypeList<Local, ?Remote> ?>")
 keel_compile_fail(mixed_alternative "MixedProviders<Cache, ?keel::detail::TypeList<MemoryCache ?>, ?keel::detail::TypeList<RedisCache ?> ?>")
 keel_compile_fail(provides_and_alternative "ProvidesAndAlternative<RedisCache, ?Cache>")
@@ -167,7 +167,7 @@ keel_compile_fail(require_valid "MissingDependency<Server, ?Logger>")
 keel_compile_fail(require_valid_duplicate_entry "a dependency is listed twice")
 keel_compile_fail(duplicate_async_init "keel::AsyncInit or keel::AsyncStart is listed twice in keel::Component<...>, which lists only dependencies. Inherit it instead")
 keel_compile_fail(optional_async_init "MisplacedAsync<Database, ?keel::Optional<keel::AsyncInit> ?>")
-keel_compile_fail(init_after_async_start "MisplacedAsync<Feed, ?keel::InitAfter<keel::AsyncStart> ?>")
+keel_compile_fail(after_async_start "MisplacedAsync<Feed, ?keel::After<keel::AsyncStart> ?>")
 keel_compile_fail(async_init_in_compose "NotAComponent<keel::AsyncInit>")
 keel_compile_fail(get_component_on_async_marker "keel::AsyncInit and keel::AsyncStart are base classes, not dependencies")
 keel_compile_fail(async_as_dependency "AsyncAsDependency<Database, ?keel::AsyncInit>")

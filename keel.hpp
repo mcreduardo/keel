@@ -82,17 +82,17 @@ struct Optional {};
 /// in the app, nothing happens, unless a composed component derives from T without
 /// keel::Provides<T>: that is a compile error (UndeclaredProvider).
 template <class T>
-struct InitAfter {};
+struct After {};
 
 /// Declares that a component implements the interface I, a plain class it also derives from
 /// publicly. It is a base class, next to keel::Component<...>, which lists only the
 /// component's dependencies:
 ///   class DiskStorage : public keel::Component<Config>, public keel::Provides<Storage>, public Storage
 /// Other components can then list Storage (or keel::Optional<Storage>, or
-/// keel::InitAfter<Storage>) and get the DiskStorage. A component that implements several
+/// keel::After<Storage>) and get the DiskStorage. A component that implements several
 /// interfaces derives from one keel::Provides<> per interface. A dependency on I needs
 /// exactly one provider of I in the app; with two, it is a compile error (unless each of
-/// them is a keel::Alternative<I>, chosen at runtime). keel::InitAfter<I> orders after every
+/// them is a keel::Alternative<I>, chosen at runtime). keel::After<I> orders after every
 /// provider, and keel::All<I> uses every provider. Dependencies match by exact type: a
 /// component that derives from I without deriving from keel::Provides<I> is not found as I
 /// (and keel reports it).
@@ -105,7 +105,7 @@ struct InitAfter {};
 ///
 /// C++20 can't list the base classes of a class, so keel asks each composed component about
 /// the types something refers to: the dependencies of the composed components (I,
-/// keel::Optional<I>, keel::InitAfter<I>, keel::All<I>, ...), and App::getComponent<I>() and
+/// keel::Optional<I>, keel::After<I>, keel::All<I>, ...), and App::getComponent<I>() and
 /// run(&I::f) at the root. A keel::Provides<I> that nothing refers to has no effect: it isn't
 /// checked (NotDerivedFromInterface, InaccessibleProvides) and App::toDot() doesn't show it.
 ///
@@ -264,7 +264,7 @@ class Registry;
 /// Nothing may require a conditional component, since it may not be there, except through
 /// keel::Alternative<I>, whose choice is checked at startup. A dependency on a conditional
 /// T is keel::Optional<T> (findComponent<T>() returns nullptr while it is disabled),
-/// keel::InitAfter<T> or keel::Optional<keel::All<I>>. A plain T, or an interface I whose
+/// keel::After<T> or keel::Optional<keel::All<I>>. A plain T, or an interface I whose
 /// one provider is a conditional component, doesn't compile
 /// (RequiredConditional, RequiredConditionalProvider), and neither does a keel::All<I>
 /// whose providers are all conditional (OnlyConditionalProviders), nor run(&T::f) on one
@@ -428,7 +428,7 @@ enum class Use {
 struct EmptySplit {
     using required = TypeList<>;
     using optional = TypeList<>;
-    using initAfter = TypeList<>;
+    using after = TypeList<>;
     using all = TypeList<>;
     using misnested = TypeList<>;
     using listedProvides = TypeList<>;
@@ -453,8 +453,8 @@ struct Split<Optional<T>> : EmptySplit {
     static constexpr Use use = Use::optional;
 };
 template <class T>
-struct Split<InitAfter<T>> : EmptySplit {
-    using initAfter = TypeList<T>;
+struct Split<After<T>> : EmptySplit {
+    using after = TypeList<T>;
     using target = T;
     static constexpr Use use = Use::ordering;
 };
@@ -511,7 +511,7 @@ inline constexpr bool isDependencyMarker = isAsyncMarker<T>;
 template <class T>
 inline constexpr bool isDependencyMarker<Optional<T>> = true;
 template <class T>
-inline constexpr bool isDependencyMarker<InitAfter<T>> = true;
+inline constexpr bool isDependencyMarker<After<T>> = true;
 template <class T>
 inline constexpr bool isDependencyMarker<Provides<T>> = true;
 template <class T>
@@ -519,7 +519,7 @@ inline constexpr bool isDependencyMarker<Alternative<T>> = true;
 template <class T>
 inline constexpr bool isDependencyMarker<All<T>> = true;
 
-// Optional<T>, InitAfter<T> and Optional<All<T>> may name a type that isn't composed, and
+// Optional<T>, After<T> and Optional<All<T>> may name a type that isn't composed, and
 // All<T> an interface, but it must be a type that could be one: a class,
 // not const or volatile, not another marker (AsyncInit and AsyncStart included). Anything
 // else would never match.
@@ -1039,7 +1039,7 @@ template <class Base>
 struct ComponentListCheck {
     static_assert(Base::uniqueDependencies,
                   "keel: a dependency is listed twice in keel::Component<...> (T, keel::Optional<T>, "
-                  "keel::InitAfter<T>, keel::All<T> and keel::Optional<keel::All<T>> count as the same)");
+                  "keel::After<T>, keel::All<T> and keel::Optional<keel::All<T>> count as the same)");
     static_assert(Base::uniqueListedAlternatives,
                   "keel: keel::Alternative<I> is listed twice in keel::Component<...>, which lists only what the "
                   "component needs. Inherit keel::Alternative<I> instead, once: class C : public "
@@ -1118,7 +1118,7 @@ struct RequiredConditional {
     static_assert(unconditionalDependency<Component, T>,
                   "keel: the Component in RequiredConditional<Component, T> requires T, and T is a "
                   "keel::Conditional that configuration may turn off. Depend on keel::Optional<T> instead, and "
-                  "use findComponent<T>(), which returns nullptr while T is disabled (or keel::InitAfter<T> for "
+                  "use findComponent<T>(), which returns nullptr while T is disabled (or keel::After<T> for "
                   "ordering only).");
 };
 
@@ -1266,9 +1266,9 @@ template <class Component, class Entry>
 struct InvalidDependency {
     static_assert(validEntry<Component, Entry>,
                   "keel: the Component in InvalidDependency<Component, Entry> lists Entry (T, keel::Optional<T>, "
-                  "keel::InitAfter<T> or keel::All<T>), and T can never be a component or an interface: T must be "
+                  "keel::After<T> or keel::All<T>), and T can never be a component or an interface: T must be "
                   "a class type, not a reference, not const/volatile, and not itself keel::Optional, "
-                  "keel::InitAfter, keel::Provides, keel::Alternative or keel::All");
+                  "keel::After, keel::Provides, keel::Alternative or keel::All");
 };
 
 template <class Component, class Entry>
@@ -1298,7 +1298,7 @@ template <class Component, class Bundle>
 struct BundleAsDependency {
     static_assert(notABundle<Component, Bundle>,
                   "keel: the Component in BundleAsDependency<Component, Bundle> lists a keel::Bundle<...> in its "
-                  "keel::Component<...> (as T, keel::Optional<T>, keel::InitAfter<T>, ...). Bundles only group "
+                  "keel::Component<...> (as T, keel::Optional<T>, keel::After<T>, ...). Bundles only group "
                   "components for compose<...>: list the components you use, each on its own.");
 };
 
@@ -1478,7 +1478,7 @@ template <class T, class C>
 inline constexpr bool isProvider =
     std::is_same_v<T, C> || providesBase<C, T> || alternativeBase<C, T> || contains<T, ListedOf<C>>;
 
-// An entry that refers to a type keel resolves: a dependency (T, Optional<T>, InitAfter<T>,
+// An entry that refers to a type keel resolves: a dependency (T, Optional<T>, After<T>,
 // All<T>, Optional<All<T>>) on a type that could be a component. These, and the root's
 // getComponent<T>() and run(&T::f), are the types keel asks the components about.
 template <class Entry>
@@ -1628,7 +1628,7 @@ struct Composition<TypeList<Cs...>> {
     template <class T>
     using RootBroken = std::conditional_t<(brokenCount<T> == 0 || dependentCount<T> > 0), Passed<T>, Broken<T>>;
 
-    // The providers of T other than C: what C's InitAfter<T> and All<T> refer to.
+    // The providers of T other than C: what C's After<T> and All<T> refer to.
     template <class C, class T>
     static constexpr Row others{(!std::is_same_v<C, Cs> && isProvider<T, Cs>)...};
     // Those that are always there: not keel::Conditional.
@@ -1651,7 +1651,7 @@ struct Composition<TypeList<Cs...>> {
     using Derived = decltype(derivedOf<C, T>(std::make_index_sequence<size>{}));
 
     // The check of one entry of C's keel::Component<...> list, as written (T, Optional<T>,
-    // InitAfter<T>, All<T> or Optional<All<T>>, and the mistakes): a
+    // After<T>, All<T> or Optional<All<T>>, and the mistakes): a
     // Passed<...> if fine, else the named failure (see above), wrapped in an Outcome<>.
     template <class C, class Entry>
     static auto check() {
@@ -1713,7 +1713,7 @@ struct Composition<TypeList<Cs...>> {
                 return Outcome<RequiredConditionalProvider<C, T, Provider>>{};
             }
         } else {
-            return Outcome<Passed<C, Entry>>{};  // InitAfter<T> orders after every provider
+            return Outcome<Passed<C, Entry>>{};  // After<T> orders after every provider
         }
     }
     template <class C, class Entry>
@@ -1722,7 +1722,7 @@ struct Composition<TypeList<Cs...>> {
     // The components C is ordered after because of one entry: the provider of a dependency,
     // or every alternative, so that the choice is made first (none if there are several
     // providers otherwise: that is reported as ambiguous, not as a cycle too), and for
-    // InitAfter<T>, All<T> and Optional<All<T>> every provider of T other than C itself.
+    // After<T>, All<T> and Optional<All<T>> every provider of T other than C itself.
     template <class C, class Entry>
     static constexpr Row edgesOf() {
         using T = typename Split<Entry>::target;
@@ -1959,11 +1959,11 @@ constexpr std::string_view typeName() noexcept {
 // keel::Component
 
 /// Base class of every component. List the components and interfaces it uses: T,
-/// keel::Optional<T>, keel::InitAfter<T>, keel::All<I>, keel::Optional<keel::All<I>>. Only
+/// keel::Optional<T>, keel::After<T>, keel::All<I>, keel::Optional<keel::All<I>>. Only
 /// dependencies; what the component is goes in its other base classes (keel::Provides<I>,
 /// keel::Alternative<I>, keel::Conditional, keel::AsyncInit, keel::AsyncStart):
 ///   class Exporter : public keel::Component<Aggregator, Logger, keel::Optional<Metrics>,
-///                                           keel::InitAfter<Migrations>, keel::All<Format>>,
+///                                           keel::After<Migrations>, keel::All<Format>>,
 ///                    public keel::Provides<Sink>,
 ///                    public Sink
 /// A dependency is a component, or an interface that one component provides (derives from
@@ -1975,10 +1975,10 @@ class Component : public detail::ComponentBase {
 public:
     using RequiredDependencies = detail::Concat<typename detail::Split<Dependencies>::required...>;
     using OptionalDependencies = detail::Concat<typename detail::Split<Dependencies>::optional...>;
-    using InitAfterDependencies = detail::Concat<typename detail::Split<Dependencies>::initAfter...>;
+    using AfterDependencies = detail::Concat<typename detail::Split<Dependencies>::after...>;
     using AllDependencies = detail::Concat<typename detail::Split<Dependencies>::all...>;  // also Optional<All<I>>
     using MisnestedDependencies = detail::Concat<typename detail::Split<Dependencies>::misnested...>;
-    using DeclaredDependencies = detail::Concat<RequiredDependencies, OptionalDependencies, InitAfterDependencies,
+    using DeclaredDependencies = detail::Concat<RequiredDependencies, OptionalDependencies, AfterDependencies,
                                                 AllDependencies, MisnestedDependencies>;
     // keel::Provides<I> and keel::Alternative<I> are base classes, not entries: listed, they
     // are ProvidesAsDependency and AlternativeAsDependency.
@@ -1986,7 +1986,7 @@ public:
     using ListedAlternatives = detail::Concat<typename detail::Split<Dependencies>::listedAlternatives...>;
     using Entries = detail::TypeList<Dependencies...>;  // as written
 
-    // T, Optional<T>, InitAfter<T>, All<T> and Optional<All<T>> all name T, so listing two
+    // T, Optional<T>, After<T>, All<T> and Optional<All<T>> all name T, so listing two
     // of them is a duplicate.
     static constexpr bool uniqueDependencies = detail::UniqueList<DeclaredDependencies>::value;
     static constexpr bool uniqueListedProvides = detail::UniqueList<ListedProvides>::value;
@@ -2018,7 +2018,7 @@ public:
 
 protected:
     /// A required dependency. Compiles only if T is listed in keel::Component<...> as a
-    /// required dependency (not keel::Optional<T>, keel::InitAfter<T> or keel::All<T>).
+    /// required dependency (not keel::Optional<T>, keel::After<T> or keel::All<T>).
     /// Usable from init() on (and from enabled(), for a keel::Conditional); resolve it in
     /// init() and keep the reference. With keel::AsyncInit too: T's init() has finished, and
     /// what it did is visible. For an interface with keel::Alternative<> providers, the
@@ -2033,8 +2033,8 @@ protected:
         } else if constexpr (checkedAccess<T>) {
             static_assert(!detail::contains<T, OptionalDependencies>,
                           "keel: T is declared keel::Optional<T>; use findComponent<T>(), which may return nullptr");
-            static_assert(!detail::contains<T, InitAfterDependencies>,
-                          "keel: T is declared keel::InitAfter<T>, which is ordering only; replace it with T to use T");
+            static_assert(!detail::contains<T, AfterDependencies>,
+                          "keel: T is declared keel::After<T>, which is ordering only; replace it with T to use T");
             static_assert(!detail::contains<T, AllDependencies>,
                           "keel: T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()");
             static_assert(detail::contains<T, DeclaredDependencies>,
@@ -2057,8 +2057,8 @@ protected:
         } else if constexpr (checkedAccess<T>) {
             static_assert(!detail::contains<T, RequiredDependencies>,
                           "keel: T is a required dependency; use getComponent<T>(), which never returns nullptr");
-            static_assert(!detail::contains<T, InitAfterDependencies>,
-                          "keel: T is declared keel::InitAfter<T>, which is ordering only; replace it with "
+            static_assert(!detail::contains<T, AfterDependencies>,
+                          "keel: T is declared keel::After<T>, which is ordering only; replace it with "
                           "keel::Optional<T> to use T");
             static_assert(!detail::contains<T, AllDependencies>,
                           "keel: T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()");
@@ -2090,8 +2090,8 @@ protected:
             static_assert(!detail::contains<I, OptionalDependencies>,
                           "keel: I is declared keel::Optional<I> (at most one provider); use findComponent<I>(), or "
                           "replace it with keel::Optional<keel::All<I>> to use every provider");
-            static_assert(!detail::contains<I, InitAfterDependencies>,
-                          "keel: I is declared keel::InitAfter<I>, which is ordering only; replace it with "
+            static_assert(!detail::contains<I, AfterDependencies>,
+                          "keel: I is declared keel::After<I>, which is ordering only; replace it with "
                           "keel::All<I> (or keel::Optional<keel::All<I>>) to use I");
             static_assert(detail::contains<I, DeclaredDependencies>,
                           "keel: getAll<I>() requires keel::All<I> or keel::Optional<keel::All<I>> in this "
@@ -2377,7 +2377,7 @@ public:
     /// component of the App refers to are shown (keel::Provides<I> is a base class, and C++20
     /// can't list a class's bases). An arrow goes from a component to each component it is
     /// ordered after because of one entry of its list: plain for a required dependency, dashed
-    /// for keel::Optional, dotted with an open head for keel::InitAfter, bold for keel::All,
+    /// for keel::Optional, dotted with an open head for keel::After, bold for keel::All,
     /// bold and dashed for keel::Optional<keel::All>; labelled with the interface when it
     /// resolves through one. Two entries that resolve to the same component (T, and an
     /// interface T provides) give two arrows. Arrows point to the dependencies, which are drawn

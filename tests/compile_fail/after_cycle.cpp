@@ -1,10 +1,10 @@
-// Must not compile: InitAfter orders like a dependency, so Worker -> InitAfter<Pool> ->
+// Must not compile: After orders like a dependency, so Worker -> After<Pool> ->
 // Worker is a cycle.
 #include <keel.hpp>
 
 class Worker;
 class Pool : public keel::Component<Worker> {};
-class Worker : public keel::Component<keel::InitAfter<Pool>> {};
+class Worker : public keel::Component<keel::After<Pool>> {};
 
 static_assert(!keel::isValid<Pool, Worker>, "isValid disagrees with compose");
 

@@ -98,7 +98,7 @@ keel::compose<Outside, P, Q, R>();  // DependencyCycle<TypeList<P, Q, R>>
 
 Fix: break the cycle. Usually one direction is a call that should be a callback or an
 interface owned by the lower component, or two components that should be one. Every kind
-of entry orders (required, `Optional`, `InitAfter`, `All`), so each can close a cycle.
+of entry orders (required, `Optional`, `After`, `All`), so each can close a cycle.
 
 **`InvalidDependency<C, Entry>`** (8). An entry can never match a component: its type is
 not a class, is `const` or `volatile`, is a reference, or is itself a marker.
@@ -121,7 +121,7 @@ entry, such as `keel::Optional<keel::AsyncInit>`.
 Fix: they are base classes: `class C : public keel::Component<Config>, public
 keel::AsyncInit`.
 
-**A dependency listed twice** (11). `T`, `Optional<T>`, `InitAfter<T>`, `All<T>` and
+**A dependency listed twice** (11). `T`, `Optional<T>`, `After<T>`, `All<T>` and
 `Optional<All<T>>` all name `T`; two of them in one list is an error. (Listing
 `keel::Provides<I>`, `keel::Alternative<I>`, `keel::AsyncInit` or `keel::AsyncStart` twice
 is this error too; its message says to inherit it instead, as in 42, 45 and 47.)
@@ -193,7 +193,7 @@ Fix: make every provider an `Alternative<I>` and a `keel::Conditional` (a do-not
 default is an alternative too), or compose only one.
 
 **`UndeclaredProvider<C, T, Derived>`** (15). `C` depends on `T` (required, `Optional` or
-`InitAfter`), nothing composed is or provides `T`, and `Derived` derives from `T` without
+`After`), nothing composed is or provides `T`, and `Derived` derives from `T` without
 deriving from `keel::Provides<T>`. keel matches exact types, so `Derived` would never be
 found.
 
@@ -312,10 +312,10 @@ accessor to use instead.
 |---|---|---|
 | `getComponent<T>()` for a `T` the list doesn't name (20) | `getComponent<T>() requires T to be listed in this component's keel::Component<...>` | list `T` |
 | `getComponent<T>()` on `Optional<T>` (21) | `T is declared keel::Optional<T>; use findComponent<T>(), which may return nullptr` | `findComponent<T>()` |
-| `getComponent<T>()` on `InitAfter<T>` (22) | `T is declared keel::InitAfter<T>, which is ordering only; replace it with T to use T` | list `T` instead |
+| `getComponent<T>()` on `After<T>` (22) | `T is declared keel::After<T>, which is ordering only; replace it with T to use T` | list `T` instead |
 | `findComponent<T>()` on a required `T` (23) | `T is a required dependency; use getComponent<T>(), which never returns nullptr` | `getComponent<T>()` |
 | `findComponent<T>()` without `Optional<T>` | `findComponent<T>() requires keel::Optional<T> in this component's keel::Component<...>` | list `Optional<T>` |
-| `getAll<I>()` on a required `I` (24), `Optional<I>` or `InitAfter<I>` | `I is a required dependency (one provider); use getComponent<I>(), or replace it with keel::All<I> ...` | `getComponent`/`findComponent`, or list `All<I>` |
+| `getAll<I>()` on a required `I` (24), `Optional<I>` or `After<I>` | `I is a required dependency (one provider); use getComponent<I>(), or replace it with keel::All<I> ...` | `getComponent`/`findComponent`, or list `All<I>` |
 | `getAll<I>()` without `All<I>` | `getAll<I>() requires keel::All<I> or keel::Optional<keel::All<I>> ...` | list one of them |
 | `getComponent<T>()`/`findComponent<T>()` on `All<T>` | `T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()` | `getAll<T>()` |
 | `getComponent<keel::AsyncInit>()` (25) | `keel::AsyncInit and keel::AsyncStart are base classes, not dependencies` | nothing to get |
@@ -383,7 +383,7 @@ class Dashboard : public keel::Component<Uplink> {};  // RequiredConditional<Das
 ```
 
 Fix: list `keel::Optional<T>` and use `findComponent<T>()`, which returns `nullptr` while
-`T` is disabled (or `keel::InitAfter<T>` for ordering only). Or, if `T` is always needed,
+`T` is disabled (or `keel::After<T>` for ordering only). Or, if `T` is always needed,
 don't make it conditional.
 
 **`RequiredConditionalProvider<C, I, Provider>`** (36). `C` requires the interface `I`, and

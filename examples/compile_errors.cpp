@@ -23,7 +23,7 @@
 //    48 InaccessibleAsync            Inside a component
 //                                      20 getComponent<T>() on an undeclared T
 //   The composition root               21 getComponent<T>() on keel::Optional<T>
-//    27 NotInApp                       22 getComponent<T>() on keel::InitAfter<T>
+//    27 NotInApp                       22 getComponent<T>() on keel::After<T>
 //    28 AmbiguousInterface             23 findComponent<T>() on a required T
 //    29 RunTargetNotComposed           24 getAll<I>() on a required I
 //    30 RunTargetAmbiguous             25 getComponent<keel::AsyncInit>()
@@ -173,7 +173,7 @@ class Server : public keel::Component<keel::Optional<Logger>> {
 };
 
 #elif KEEL_ERROR == 22  // getComponent<T>() for an ordering-only dependency
-class Server : public keel::Component<keel::InitAfter<Logger>> {
+class Server : public keel::Component<keel::After<Logger>> {
     void init() override { getComponent<Logger>(); }
 };
 

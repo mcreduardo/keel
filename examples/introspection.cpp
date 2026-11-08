@@ -49,7 +49,7 @@ private:
     void init() override { work(15); }
 };
 
-class Metrics : public keel::Component<Logger, keel::InitAfter<Database>> {};
+class Metrics : public keel::Component<Logger, keel::After<Database>> {};
 
 class HealthEndpoint : public keel::Component<keel::All<HealthCheck>, Logger> {
     void start() override { work(1); }

@@ -14,7 +14,7 @@ show up in compile errors, not in your code.
 | `keel::Component<Entries...>` | Base class. Each entry is one of the rows below: a dependency, and nothing else. |
 | `T` | required dependency |
 | `keel::Optional<T>` | optional dependency |
-| `keel::InitAfter<T>` | ordering only |
+| `keel::After<T>` | ordering only |
 | `keel::All<I>` | every provider of `I`, at least one |
 | `keel::Optional<keel::All<I>>` | every provider of `I`, possibly none |
 
@@ -33,7 +33,7 @@ The listed types may be incomplete in the component's header. Details:
 
 A component that configuration may turn off also derives from `keel::Conditional`
 (publicly) and overrides `bool enabled() const`. Nothing may require it: dependents list
-`Optional<T>`, `InitAfter<T>` or `Optional<All<I>>`. Details:
+`Optional<T>`, `After<T>` or `Optional<All<I>>`. Details:
 [Decisions at runtime](runtime-decisions.md).
 
 ### Inside a component

@@ -77,7 +77,7 @@ class DiskStorage : public keel::Component<>, public keel::Provides<Storage>, pu
 class MemoryStorage : public keel::Component<>, public keel::Provides<Storage>, public Storage {};
 class UsesStorage : public keel::Component<Storage> {};
 class MaybeStorage : public keel::Component<keel::Optional<Storage>> {};
-class AfterStorage : public keel::Component<keel::InitAfter<Storage>> {};
+class AfterStorage : public keel::Component<keel::After<Storage>> {};
 class NotStorage : public keel::Component<>, public keel::Provides<Storage> {};
 struct StorageReader : Storage {};
 struct StorageWriter : Storage {};
@@ -152,7 +152,7 @@ class Uplink : public keel::Component<Config>, public keel::Conditional {
 };
 class NeedsUplink : public keel::Component<Uplink> {};
 class MaybeUplink : public keel::Component<keel::Optional<Uplink>> {};
-class AfterUplink : public keel::Component<keel::InitAfter<Uplink>> {};
+class AfterUplink : public keel::Component<keel::After<Uplink>> {};
 class ConditionalNeedsUplink : public keel::Component<Uplink>, public keel::Conditional {
     bool enabled() const override { return true; }
 };
@@ -251,7 +251,7 @@ static_assert(!keel::isValid<MisnestedChecks, DatabaseCheck>);
 class P;
 class Q;
 class P : public keel::Component<Q> {};
-class Q : public keel::Component<keel::InitAfter<P>> {};
+class Q : public keel::Component<keel::After<P>> {};
 static_assert(!keel::isValid<P, Q>);
 
 // Types that can't be components or dependencies at all: still a plain false.
@@ -283,7 +283,7 @@ static_assert(!keel::isValid<OwnNames>);  // still needs Config
 // Bundles: as a dependency, or reached twice.
 using Core = keel::Bundle<Config, Logger>;
 class NeedsCore : public keel::Component<Core> {};
-class AfterCore : public keel::Component<keel::InitAfter<Core>> {};
+class AfterCore : public keel::Component<keel::After<Core>> {};
 class MaybeCore : public keel::Component<keel::Optional<Core>> {};
 static_assert(!keel::isValid<Core, NeedsCore>);
 static_assert(!keel::isValid<Core, AfterCore>);

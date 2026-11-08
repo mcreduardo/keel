@@ -48,8 +48,8 @@ class Migrations : public keel::Component<Database> {
     void init() override { say("init", componentName()); }
 };
 
-// keel::InitAfter<Migrations>: ordering only (no access to Migrations).
-class HttpServer : public keel::Component<Options, Database, Logger, keel::InitAfter<Migrations>> {
+// keel::After<Migrations>: ordering only (no access to Migrations).
+class HttpServer : public keel::Component<Options, Database, Logger, keel::After<Migrations>> {
 public:
     int requests() const { return 3; }
 

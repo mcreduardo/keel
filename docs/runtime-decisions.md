@@ -146,7 +146,7 @@ and the compiler checks that they do:
 | Dependent declares | Result |
 |---|---|
 | `Optional<Uplink>` | `findComponent<Uplink>()` returns `nullptr` while Uplink is disabled |
-| `InitAfter<Uplink>` | ordering only, as usual |
+| `After<Uplink>` | ordering only, as usual |
 | `Optional<All<I>>` (Uplink provides `I`) | Uplink is left out of `getAll<I>()`, which may become empty |
 | `All<I>` | Uplink is left out of `getAll<I>()`; compiles only if some provider of `I` isn't conditional (`OnlyConditionalProviders`), so the list is never empty |
 | `Uplink` (required) | compile error: `RequiredConditional<Dashboard, Uplink>` |
@@ -179,7 +179,7 @@ use it declare it**:
 
 | Dependents declare | Do this | Effect |
 |---|---|---|
-| nothing, `Optional<X>`, `InitAfter<X>`, `Optional<All<I>>`, or `All<I>` with a provider that is always there | make `X` a `keel::Conditional` | X never runs; `findComponent` gives `nullptr`; `getAll` skips it |
+| nothing, `Optional<X>`, `After<X>`, `Optional<All<I>>`, or `All<I>` with a provider that is always there | make `X` a `keel::Conditional` | X never runs; `findComponent` gives `nullptr`; `getAll` skips it |
 | `I` (a required interface) | add a do-nothing implementation; in a factory, create it when the feature is off (or make both `Alternative<I>` with opposite `enabled()`) | dependents keep calling `I`; the stub ignores the calls (the *null object* pattern) |
 | the concrete `X` (required) | change the dependents to `Optional<X>`, or introduce an interface | the compiler won't let a required `X` be conditional |
 

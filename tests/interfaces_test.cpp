@@ -81,7 +81,7 @@ private:
 };
 
 // Runs after every Storage, of which there may be several.
-class Backup : public keel::Component<keel::InitAfter<Storage>> {
+class Backup : public keel::Component<keel::After<Storage>> {
     void init() override { events.push_back("init Backup"); }
     void deinit() noexcept override { events.push_back("deinit Backup"); }
 };
@@ -146,7 +146,7 @@ TEST(an_optional_interface_gets_its_provider_or_nullptr) {
     }
 }
 
-TEST(init_after_an_interface_follows_every_provider) {
+TEST(after_an_interface_follows_every_provider) {
     events.clear();
     {
         auto app = keel::compose<Backup, MemoryStorage, DiskStorage>();
@@ -215,7 +215,7 @@ TEST(keel_run_calls_an_interface_member) {
 
 namespace {
 
-class CachedStorage : public keel::Component<keel::InitAfter<HealthCheck>>, public keel::Provides<HealthCheck>,
+class CachedStorage : public keel::Component<keel::After<HealthCheck>>, public keel::Provides<HealthCheck>,
                       public HealthCheck {
 public:
     bool healthy() const override { return true; }
@@ -226,7 +226,7 @@ private:
 
 }  // namespace
 
-TEST(init_after_its_own_interface_follows_the_other_providers) {
+TEST(after_its_own_interface_follows_the_other_providers) {
     events.clear();
     auto app = keel::compose<CachedStorage, DiskStorage>();
     app.init();
@@ -295,11 +295,11 @@ constexpr int appSize = 150;
 template <int N>
 class Part;
 
-// Part<N> uses Part<N-1> ... Part<N-4>, plus InitAfter<Node>.
+// Part<N> uses Part<N-1> ... Part<N-4>, plus After<Node>.
 template <int N>
 struct PartBase {
     using type = keel::Component<Part<N - 1>, Part<N - 2>, Part<N - 3>, keel::Optional<Part<N - 4>>,
-                                 keel::InitAfter<Node>>;
+                                 keel::After<Node>>;
 };
 template <>
 struct PartBase<0> {
@@ -307,15 +307,15 @@ struct PartBase<0> {
 };
 template <>
 struct PartBase<1> {
-    using type = keel::Component<Part<0>, keel::InitAfter<Node>>;
+    using type = keel::Component<Part<0>, keel::After<Node>>;
 };
 template <>
 struct PartBase<2> {
-    using type = keel::Component<Part<1>, Part<0>, keel::InitAfter<Node>>;
+    using type = keel::Component<Part<1>, Part<0>, keel::After<Node>>;
 };
 template <>
 struct PartBase<3> {
-    using type = keel::Component<Part<2>, Part<1>, Part<0>, keel::InitAfter<Node>>;
+    using type = keel::Component<Part<2>, Part<1>, Part<0>, keel::After<Node>>;
 };
 
 // Part<0> alone provides Node.
@@ -368,7 +368,7 @@ TEST(a_large_app_draws_its_graph) {
     const std::string dot = app.toDot();
     std::size_t edges = 0;
     for (std::size_t at = dot.find(" -> "); at != std::string::npos; at = dot.find(" -> ", at + 1)) ++edges;
-    // Part<N> for N >= 4: three required, one optional, InitAfter<Node>; Part<1..3>: 2, 3
+    // Part<N> for N >= 4: three required, one optional, After<Node>; Part<1..3>: 2, 3
     // and 4; Census: one per part.
     CHECK(edges == (appSize - 4) * 5 + 2 + 3 + 4 + appSize);
     CHECK(LargeApp::initOrder().size() == appSize + 1);

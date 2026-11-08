@@ -95,7 +95,7 @@ private:
     Metrics* metrics_ = nullptr;
 };
 
-// Nobody calls it; the server must only start after it ran (keel::InitAfter below).
+// Nobody calls it; the server must only start after it ran (keel::After below).
 class Migrations : public keel::Component<Database> {
     void init() override { getComponent<Database>().query("migrate schema"); }
 };
@@ -141,10 +141,10 @@ private:
 ## The top of the graph
 
 `HttpServer` uses the chosen `Storage`, and comes after `Migrations` without using it
-(`keel::InitAfter`). Its `serve()` is what `main()` runs; `stop()` runs after it returns.
+(`keel::After`). Its `serve()` is what `main()` runs; `stop()` runs after it returns.
 
 ```cpp
-class HttpServer : public keel::Component<Config, Logger, Storage, keel::InitAfter<Migrations>> {
+class HttpServer : public keel::Component<Config, Logger, Storage, keel::After<Migrations>> {
 public:
     int serve() {
         for (int i = 0; i < 3; ++i) storage_->put("request" + std::to_string(i), "ok");

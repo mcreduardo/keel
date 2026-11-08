@@ -51,11 +51,11 @@ A component that derives from `keel::Conditional` can be turned off at runtime b
 - **When your `deinit()` runs,** every component that depends on you is deinitialized, and
   your dependencies are still initialized: you can still use them (log "closing").
 
-"Depend on" covers required dependencies, `Optional<T>` and `InitAfter<T>` when `T` is
+"Depend on" covers required dependencies, `Optional<T>` and `After<T>` when `T` is
 composed, every provider of an `All<I>`, and every `Alternative<I>` of an interface `I` you
 depend on. Components with no dependency path between
 them keep the order of the `compose<...>` list, but don't rely on that: if the order
-matters, declare it (`InitAfter<T>` if there is no real use).
+matters, declare it (`After<T>` if there is no real use).
 
 These guarantees also hold when components run on threads of their own: see
 [Async startup](async.md).

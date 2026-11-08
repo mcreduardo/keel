@@ -23,7 +23,7 @@ First release: a single C++20 header, standard library only, no RTTI.
 - Init order derived from the dependency graph (ties keep the list order); construction
   and destruction follow it.
 - Optional dependencies: `keel::Optional<T>` and `findComponent<T>()`.
-- Ordering-only dependencies: `keel::InitAfter<T>`.
+- Ordering-only dependencies: `keel::After<T>`.
 - Lifecycle: `init()`, `start()`, `stop()` and `deinit()` in dependency order (reverse on
   the way down); a failed `init()` or `start()` rolls back and rethrows; `stop()` and
   `deinit()` are `noexcept`. `App::run`, `keel::run` and member-function entry points.

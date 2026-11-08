@@ -193,7 +193,7 @@ class Metrics : public keel::Component<> {};
 class Ping : public keel::Component<>, public keel::Provides<Check>, public Check {};
 class Plugins : public keel::Component<keel::Optional<keel::All<Check>>> {};
 class Server : public keel::Component<Storage, Cache, keel::Optional<Metrics>, keel::Optional<Tracing>,
-                                      keel::InitAfter<Migrations>, keel::All<Check>> {};
+                                      keel::After<Migrations>, keel::All<Check>> {};
 
 // The labels of a DOT text, unescaped: \n is a line break, \x is x.
 std::vector<std::string> labels(const std::string& dot) {
@@ -283,7 +283,7 @@ class Flash : public keel::Component<>, public keel::Provides<Storage>, public k
               public Storage, public Gauge {};
 class Reader : public keel::Component<keel::Optional<Storage>> {};
 class FastFlash : public Flash {};  // inherits Flash's keel::Provides<>
-class AfterFlash : public keel::Component<keel::InitAfter<Gauge>> {};  // ordering only
+class AfterFlash : public keel::Component<keel::After<Gauge>> {};  // ordering only
 
 }  // namespace intro
 
@@ -297,7 +297,7 @@ TEST(to_dot_shows_the_interfaces_something_refers_to) {
     CHECK((labels(keel::compose<Flash>().toDot()) == std::vector<std::string>{"intro::Flash"}));
     // An alternative of an interface nothing refers to is shown without "alternative".
     CHECK((labels(keel::compose<Memory>().toDot()) == std::vector<std::string>{"intro::Memory"}));
-    // keel::InitAfter<Gauge> refers to Gauge too.
+    // keel::After<Gauge> refers to Gauge too.
     CHECK((labels(keel::compose<AfterFlash, Flash>().toDot()) ==
            std::vector<std::string>{"intro::Flash\nprovides intro::Gauge", "intro::AfterFlash", "intro::Gauge"}));
 }

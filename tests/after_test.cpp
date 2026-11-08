@@ -22,11 +22,11 @@ private:
 
 using Database = Part<'D'>;
 using Migrations = Part<'M', Database>;
-using Server = Part<'S', keel::InitAfter<Migrations>>;  // never uses Migrations
+using Server = Part<'S', keel::After<Migrations>>;  // never uses Migrations
 
 }  // namespace
 
-TEST(init_after_orders_a_composed_component_first) {
+TEST(after_orders_a_composed_component_first) {
     events.clear();
     {
         auto app = keel::compose<Server, Database, Migrations>();  // Server listed first
@@ -37,7 +37,7 @@ TEST(init_after_orders_a_composed_component_first) {
                                               "deinit M", "deinit D", "-S", "-M", "-D"}));
 }
 
-TEST(init_after_an_absent_component_is_ignored) {
+TEST(after_an_absent_component_is_ignored) {
     events.clear();
     {
         auto app = keel::compose<Server, Database>();  // no Migrations: Server keeps its place
@@ -47,37 +47,37 @@ TEST(init_after_an_absent_component_is_ignored) {
 }
 
 namespace {
-using Cache = Part<'C', Database, keel::InitAfter<Server>, keel::Optional<Migrations>>;
+using Cache = Part<'C', Database, keel::After<Server>, keel::Optional<Migrations>>;
 }  // namespace
 
-TEST(init_after_combines_with_the_other_dependency_kinds) {
+TEST(after_combines_with_the_other_dependency_kinds) {
     events.clear();
     {
         auto app = keel::compose<Cache, Server, Migrations, Database>();
         app.init();
     }
     // Database (required) and Migrations (optional) before Cache; Server before Cache (Cache's
-    // InitAfter<Server>) and after Migrations (Server's InitAfter<Migrations>).
+    // After<Server>) and after Migrations (Server's After<Migrations>).
     CHECK((events == std::vector<std::string>{"+D", "+M", "+S", "+C", "init D", "init M", "init S", "init C",
                                               "deinit C", "deinit S", "deinit M", "deinit D", "-C", "-S", "-M",
                                               "-D"}));
 }
 
-TEST(only_the_component_with_init_after_moves) {
+TEST(only_the_component_with_after_moves) {
     events.clear();
     using Logger = Part<'L'>;
     { auto app = keel::compose<Server, Logger, Database, Migrations>(); }
-    // Without the InitAfter edge the order would be S, L, D, M.
+    // Without the After edge the order would be S, L, D, M.
     CHECK((events == std::vector<std::string>{"+L", "+D", "+M", "+S", "-S", "-M", "-D", "-L"}));
 }
 
 namespace {
 using Third = Part<'3'>;
-using Second = Part<'2', keel::InitAfter<Third>>;
-using First = Part<'1', keel::InitAfter<Second>>;
+using Second = Part<'2', keel::After<Third>>;
+using First = Part<'1', keel::After<Second>>;
 }  // namespace
 
-TEST(init_after_is_transitive) {
+TEST(after_is_transitive) {
     events.clear();
     {
         auto app = keel::compose<First, Second, Third>();
@@ -89,10 +89,10 @@ TEST(init_after_is_transitive) {
 
 namespace {
 class Never;  // declared, never defined, never composed
-using Patient = Part<'P', keel::InitAfter<Never>>;
+using Patient = Part<'P', keel::After<Never>>;
 }  // namespace
 
-TEST(init_after_may_name_an_incomplete_type) {
+TEST(after_may_name_an_incomplete_type) {
     events.clear();
     { auto app = keel::compose<Patient>(); }
     CHECK((events == std::vector<std::string>{"+P", "-P"}));

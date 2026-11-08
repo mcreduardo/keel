@@ -61,7 +61,7 @@ TEST(a_failed_init_rolls_back_and_keeps_its_exception) {
     CHECK(trace.size() == 5);
 }
 
-TEST(init_after_a_failed_init_is_an_error) {
+TEST(after_a_failed_init_is_an_error) {
     auto app = keel::compose<A, B, BadInitC>();
     CHECK_THROWS(app.init());
     CHECK_THROWS(app.init());

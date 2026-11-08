@@ -46,7 +46,7 @@ class Migrations : public keel::Component<Database, Logger> {
 
 class Router : public keel::Component<Database, Logger> {};
 
-class HttpServer : public keel::Component<Router, Logger, keel::InitAfter<Migrations>> {
+class HttpServer : public keel::Component<Router, Logger, keel::After<Migrations>> {
 public:
     int serve() {
         getComponent<Logger>().info("serving");

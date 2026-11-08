@@ -1,4 +1,4 @@
-// Must not compile: keel::InitAfter<Plugin> and keel::All<Plugin> name the same dependency.
+// Must not compile: keel::After<Plugin> and keel::All<Plugin> name the same dependency.
 #include <keel.hpp>
 
 struct Plugin {
@@ -7,7 +7,7 @@ struct Plugin {
 
 class Spellcheck : public keel::Component<>, public keel::Provides<Plugin>, public Plugin {};
 
-class PluginMenu : public keel::Component<keel::InitAfter<Plugin>, keel::All<Plugin>> {};
+class PluginMenu : public keel::Component<keel::After<Plugin>, keel::All<Plugin>> {};
 
 static_assert(!keel::isValid<PluginMenu, Spellcheck>, "isValid disagrees with compose");
 
