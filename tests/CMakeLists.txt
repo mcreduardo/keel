@@ -38,6 +38,28 @@ else()
 endif()
 add_test(NAME keel_alloc_tests COMMAND keel_alloc_tests)
 
+# keel.hpp is generated from the development headers in include/keel/ (tools/amalgamate.py).
+# This test builds against those headers, so that they keep compiling on their own;
+# amalgamate_check fails if keel.hpp is not what the generator makes of them.
+add_executable(keel_split_headers_test split_headers_test.cpp)
+target_include_directories(keel_split_headers_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_features(keel_split_headers_test PRIVATE cxx_std_20)
+target_link_libraries(keel_split_headers_test PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(keel_split_headers_test PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(keel_split_headers_test PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME keel_split_headers_test COMMAND keel_split_headers_test)
+
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME amalgamate_check
+             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/amalgamate.py --check)
+else()
+    message(STATUS "keel: Python 3 not found; skipping the amalgamate_check test (tools/amalgamate.py --check)")
+endif()
+
 # Compile-fail tests: compile_fail/<name>.cpp must not compile, the output must match
 # <pattern>, and (GCC/Clang) there must be exactly one error, or [errors] if given. The
 # targets are excluded from the normal build; each test builds its own. They share the

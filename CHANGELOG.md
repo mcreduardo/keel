@@ -57,5 +57,7 @@ First release: a single C++20 header, standard library only, no RTTI.
 - Successful lookups don't allocate.
 - CMake: the `keel::keel` target (C++20, links `Threads::Threads`), install rules and a
   package config for `find_package(keel CONFIG)`.
+- `keel.hpp` is generated from development headers in `include/keel/` by
+  `tools/amalgamate.py`; CI checks that it is up to date. `#include <keel.hpp>` is unchanged.
 - Tests (including compile-fail tests for each diagnostic), examples run as tests,
   documentation in `docs/`, and a GitHub Actions workflow.

@@ -1,6 +1,7 @@
 // keel.hpp: application-level components with declared dependencies.
 //
 // Single header, C++20, no RTTI.
+// Generated from include/keel/ by tools/amalgamate.py; do not edit.
 //
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha

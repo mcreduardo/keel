@@ -42,6 +42,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # keel.hpp is generated from include/keel/; it must be committed up to date.
+      - name: Check that keel.hpp is generated from include/keel/
+        if: matrix.name == 'GCC 14' && matrix.build_type == 'Debug'
+        run: python3 tools/amalgamate.py --check
+
       - name: Install compiler and Ninja (Linux)
         if: runner.os == 'Linux'
         run: |

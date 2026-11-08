@@ -228,6 +228,12 @@ rules (all three are on when keel is the top-level project, off when it is added
 subdirectory). Sanitizer builds pass their flags through `CMAKE_CXX_FLAGS` and
 `CMAKE_EXE_LINKER_FLAGS`, as the CI workflow does.
 
+**Changing keel.** [`keel.hpp`](keel.hpp) is generated: the code lives in
+[`include/keel/`](include/keel), where `keel.hpp` includes the parts in `impl/` in order.
+Edit those, run `python3 tools/amalgamate.py` to regenerate `keel.hpp`, and commit both.
+CI (and the `amalgamate_check` test) fails if `keel.hpp` is out of date. To regenerate it
+on every commit, enable the pre-commit hook once per clone: `git config core.hooksPath tools/hooks`.
+
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## License

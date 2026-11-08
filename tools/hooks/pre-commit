@@ -1,0 +1,9 @@
+#!/bin/sh
+# Regenerates keel.hpp from include/keel/ and stages it, so that a commit never carries a
+# stale keel.hpp. Enable it once per clone with:
+#   git config core.hooksPath tools/hooks
+# (or copy this file to .git/hooks/pre-commit).
+set -e
+cd "$(git rev-parse --show-toplevel)"
+python3 tools/amalgamate.py
+git add keel.hpp

@@ -3,6 +3,8 @@ project(keel VERSION 0.1.0 LANGUAGES CXX)
 
 # keel is a single header: the target only carries the include path, C++20, and the
 # threads library (keel::AsyncInit and keel::AsyncStart run components on threads).
+# keel.hpp is generated from the development headers in include/keel/ by
+# tools/amalgamate.py; the target, and the install, use the generated keel.hpp.
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 add_library(keel INTERFACE)
