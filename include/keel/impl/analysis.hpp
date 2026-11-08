@@ -1,5 +1,6 @@
-// keel/impl/analysis.hpp: the checks of the compose<...> list itself, and the analysis that
-// keel::compose<...> and keel::isValid<...> share.
+// keel/impl/analysis.hpp: the analysis that keel::compose<...> and keel::isValid<...>
+// share: the checks of the compose<...> list itself (ListInfo) and of each component's list
+// (ComponentDiagnosis), combined in Analysis.
 //
 // Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
 //
@@ -9,11 +10,11 @@
 
 #include "markers.hpp"
 #include "type_list.hpp"
-#include "split.hpp"
 #include "type_name.hpp"
-#include "component_base.hpp"
+#include "lists.hpp"
+#include "component_info.hpp"
 #include "diagnostics.hpp"
-#include "graph.hpp"
+#include "composition.hpp"
 
 #include <array>
 #include <cstddef>
@@ -25,65 +26,10 @@ namespace keel {
 
 namespace detail {
 
-// Checks of the compose<...> list itself, each naming the offending type.
-template <class T>
-inline constexpr bool isComponentType = false;  // only read when the check fails
-template <class T>
-struct NotAComponent {
-    static_assert(isComponentType<T>,
-                  "keel: the T in NotAComponent<T> is in compose<...> but doesn't derive publicly, and once, "
-                  "from keel::Component<...> (or isn't defined at this point). A keel::Bundle<...> is expanded "
-                  "only when listed as is: not const, and not through a class derived from it");
-};
-
-template <class T>
-inline constexpr bool listedOnce = false;
-template <class T>
-struct DuplicateComponent {
-    static_assert(listedOnce<T>,
-                  "keel: the T in DuplicateComponent<T> is listed more than once in compose<...> (counting the "
-                  "components of each keel::Bundle<...>: two bundles may both contain T)");
-};
-
-template <class T>
-inline constexpr bool concreteType = false;
-template <class T>
-struct AbstractComponent {
-    static_assert(concreteType<T>,
-                  "keel: the T in AbstractComponent<T> is abstract: compose concrete components. (A "
-                  "keel::Conditional must override `bool enabled() const`, const included.)");
-};
-
-template <class T>
-inline constexpr bool accessibleConditional = false;
-template <class T>
-struct InaccessibleConditional {
-    static_assert(accessibleConditional<T>,
-                  "keel: the T in InaccessibleConditional<T> derives from keel::Conditional privately, protectedly "
-                  "or more than once, so keel can't ask its enabled(). Derive from keel::Conditional publicly, "
-                  "once.");
-};
-
-// The pack is always empty; it only makes the assertion depend on a template argument.
-template <class... None>
-struct EmptyComposition {
-    static_assert(sizeof...(None) > 0, "keel: compose<...> needs at least one component");
-};
-
 template <class T, bool component = derivesFromComponent<T>>
 inline constexpr bool abstractComponent = false;
 template <class T>
 inline constexpr bool abstractComponent<T, true> = std::is_abstract_v<T>;
-
-template <class T>
-inline constexpr bool accessibleAsync = false;
-template <class T>
-struct InaccessibleAsync {
-    static_assert(accessibleAsync<T>,
-                  "keel: the T in InaccessibleAsync<T> derives from keel::AsyncInit or keel::AsyncStart privately, "
-                  "protectedly or more than once, so keel can't see it. Derive from it publicly, once: class C : "
-                  "public keel::Component<...>, public keel::AsyncInit");
-};
 
 // Only read for a component (a complete class).
 template <class T, bool component = derivesFromComponent<T>>

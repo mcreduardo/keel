@@ -1,5 +1,6 @@
-// keel/impl/component.hpp: keel::Component<...>, the base class of every component, and
-// keel::typeName.
+// keel/impl/component.hpp: keel::Component<...>, the base class of every component: its
+// accessors getComponent<T>(), findComponent<T>() and getAll<I>(), and the lifecycle hooks
+// (init(), start(), stop(), deinit()) of its type-erased base, detail::ComponentBase.
 //
 // Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
 //
@@ -9,24 +10,123 @@
 
 #include "markers.hpp"
 #include "type_list.hpp"
-#include "split.hpp"
 #include "type_name.hpp"
-#include "component_base.hpp"
-#include "registry.hpp"
+#include "lists.hpp"
 #include "diagnostics.hpp"
 
+#include <atomic>
+#include <cstddef>
 #include <string_view>
 #include <vector>
 
 namespace keel {
 
-/// The name keel uses for the type T: in App::initOrder(), keel::Timing, App::toDot(),
-/// componentName() and error messages. The type as the compiler spells it
-/// (`Logger`, `edge::Imu<edge::Front>`), which may differ between compilers.
-template <class T>
-constexpr std::string_view typeName() noexcept {
-    return detail::typeName<T>();
-}
+// Declared for ComponentBase's friend declaration.
+template <class... Dependencies>
+class Component;
+
+namespace detail {
+
+class Registry;
+class ComponentBase;
+struct Need;
+
+// What a lookup finds (see Registry). Defined here, before keel::Component<...>, whose
+// getAll<I>() reads them.
+struct Binding {
+    ComponentBase* owner;
+    void* object;      // the component, or its interface subobject; cast back to the bound type only
+    bool alternative;  // bound through keel::Alternative<>: chosen at runtime
+};
+
+// Defined in diagnostics.hpp; keel::Component<...>'s constructor instantiates it.
+template <class Base>
+struct ComponentListCheck;
+
+// ===========================================================================
+// Type-erased base of every component. Users derive from keel::Component<...>.
+
+class ComponentBase {
+public:
+    ComponentBase() = default;
+    ComponentBase(const ComponentBase&) = delete;
+    ComponentBase& operator=(const ComponentBase&) = delete;
+    virtual ~ComponentBase() = default;
+
+    /// The component's type name, available once it is part of an application.
+    std::string_view componentName() const noexcept { return name_; }
+
+protected:
+    // The lifecycle hooks, in the order they run. Override the ones you need, and mark them
+    // `override`: without it, a hook with a different signature (`void start(int)`)
+    // compiles and is never called. (To let configuration turn a component off, derive
+    // from keel::Conditional too.)
+
+    /// Acquire and configure: open files, bind sockets, read settings. Runs after the
+    /// init() of every dependency, on the thread that called App::init(), or on a thread of
+    /// its own with keel::AsyncInit. Throw to abort startup. If it throws, neither stop() nor
+    /// deinit() is called on this component: undo its partial work before throwing.
+    virtual void init() {}
+    /// Begin activity: accept connections, start threads. Runs after the init() of every
+    /// component in the app, and after the start() of every dependency, on the thread that
+    /// called App::start(), or on a thread of its own with keel::AsyncStart. Throw to abort
+    /// startup. If it throws, deinit() is called on this component but stop() is not: undo
+    /// its partial work before throwing (e.g. join a thread it launched).
+    virtual void start() {}
+    /// End activity: stop accepting, drain work, join the threads start() launched. Runs
+    /// in reverse order, on the thread that calls App::stop(): the components that depend
+    /// on this one are already stopped. Must not throw: handle or log failures
+    /// here.
+    virtual void stop() noexcept {}
+    /// Release. Runs in reverse order, after every stop(), on the thread that calls
+    /// App::deinit() (or destroys the App). Dependencies are still
+    /// initialized, so they can still be used. Must not throw: handle or log cleanup
+    /// failures here.
+    virtual void deinit() noexcept {}
+
+private:
+    friend class Registry;
+    template <class...>
+    friend class keel::Component;
+
+    // A stopped component is initialized again. A disabled one (a keel::Conditional whose
+    // enabled() returned false) stays disabled.
+    enum class State : unsigned char { created, initialized, started, deinitialized, disabled };
+
+    // The dependency with this id, or nullptr if it isn't composed and not required.
+    void* lookup(TypeId id, std::string_view dependency, bool required) const;
+    // Every component bound to id, in init order, for getAll<I>(); throws unless this
+    // component may use its dependencies now. Pass each one to useIfEnabled().
+    const std::vector<Binding>& lookupAll(TypeId id, std::string_view dependency) const;
+    // The bound object of an entry of lookupAll(), or nullptr if it is this component or
+    // disabled; throws as use() does.
+    void* useIfEnabled(const Binding& binding, std::string_view dependency) const;
+    // Throws unless this component may use its dependencies now (from init() on).
+    void checkCanUse(std::string_view accessor, std::string_view dependency) const;
+    // The bound object, if its owner is initialized; else throws.
+    void* use(const Binding& binding, std::string_view dependency) const;
+    // Before init(): throws unless every required dependency resolves to one enabled
+    // component, and every Optional<T> to at most one. (Only keel::Alternative<>s can fail
+    // that: the rest is checked at compile time.)
+    void checkDependencies() const;
+
+    // Set when the component is added to an App, then only read.
+    Registry* registry_ = nullptr;
+    const Need* needs_ = nullptr;  // the entries of the keel::Component<...> list that init() checks
+    std::size_t needCount_ = 0;
+    std::string_view name_;
+    const Conditional* conditional_ = nullptr;  // the component, if it is a keel::Conditional
+    bool asyncInit_ = false;   // keel::AsyncInit
+    bool asyncStart_ = false;  // keel::AsyncStart
+
+    // Written only by the thread running this component's hook (or the rollback, after
+    // every thread has finished). A dependent reads it after the scheduler has ordered that
+    // write before the read (see Registry::Schedule). Atomic so that a lookup from a thread
+    // the component started itself (in start(), say) isn't a data race.
+    std::atomic<State> state_ = State::created;
+};
+
+}  // namespace detail
 
 // ===========================================================================
 // keel::Component

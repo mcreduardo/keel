@@ -1,5 +1,6 @@
 // keel/impl/diagnostics.hpp: the compile-time diagnostics: one class template per mistake,
-// named after it.
+// named after it (MissingDependency, DependencyCycle, NotAComponent, RunNotCallable, ...),
+// and Passed<...>, the outcome of a check that passes.
 //
 // Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
 //
@@ -7,30 +8,13 @@
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
 
-#include "component_base.hpp"
+#include "type_list.hpp"
 
 #include <type_traits>
 
 namespace keel {
 
 namespace detail {
-
-// ===========================================================================
-// Compile-time composition analysis for keel::compose<...>
-
-// T derives publicly, and once, from one keel::Component<...>. A pointer conversion checks
-// access and ambiguity too; no pointer is formed for a non-class T (a reference, a
-// function type). An incomplete T is not a component.
-template <class T>
-constexpr bool derivesFromComponentImpl() {
-    if constexpr (std::is_class_v<T>) {
-        return std::is_convertible_v<T*, ComponentBase*> && requires { componentBaseOf(static_cast<T*>(nullptr)); };
-    } else {
-        return false;
-    }
-}
-template <class T>
-inline constexpr bool derivesFromComponent = derivesFromComponentImpl<T>();
 
 // Diagnostics. Each failure is a class template named after the mistake, whose template
 // arguments name the types involved: MissingDependency<Aggregator, WorkerPool>. A check
@@ -338,6 +322,149 @@ inline constexpr bool acyclic = false;
 template <class Cycle>
 struct DependencyCycle {
     static_assert(acyclic<Cycle>, "keel: dependency cycle among the components in DependencyCycle<TypeList<...>>");
+};
+
+// Checks of the compose<...> list itself, each naming the offending type.
+template <class T>
+inline constexpr bool isComponentType = false;  // only read when the check fails
+template <class T>
+struct NotAComponent {
+    static_assert(isComponentType<T>,
+                  "keel: the T in NotAComponent<T> is in compose<...> but doesn't derive publicly, and once, "
+                  "from keel::Component<...> (or isn't defined at this point). A keel::Bundle<...> is expanded "
+                  "only when listed as is: not const, and not through a class derived from it");
+};
+
+template <class T>
+inline constexpr bool listedOnce = false;
+template <class T>
+struct DuplicateComponent {
+    static_assert(listedOnce<T>,
+                  "keel: the T in DuplicateComponent<T> is listed more than once in compose<...> (counting the "
+                  "components of each keel::Bundle<...>: two bundles may both contain T)");
+};
+
+template <class T>
+inline constexpr bool concreteType = false;
+template <class T>
+struct AbstractComponent {
+    static_assert(concreteType<T>,
+                  "keel: the T in AbstractComponent<T> is abstract: compose concrete components. (A "
+                  "keel::Conditional must override `bool enabled() const`, const included.)");
+};
+
+template <class T>
+inline constexpr bool accessibleConditional = false;
+template <class T>
+struct InaccessibleConditional {
+    static_assert(accessibleConditional<T>,
+                  "keel: the T in InaccessibleConditional<T> derives from keel::Conditional privately, protectedly "
+                  "or more than once, so keel can't ask its enabled(). Derive from keel::Conditional publicly, "
+                  "once.");
+};
+
+// The pack is always empty; it only makes the assertion depend on a template argument.
+template <class... None>
+struct EmptyComposition {
+    static_assert(sizeof...(None) > 0, "keel: compose<...> needs at least one component");
+};
+
+template <class T>
+inline constexpr bool accessibleAsync = false;
+template <class T>
+struct InaccessibleAsync {
+    static_assert(accessibleAsync<T>,
+                  "keel: the T in InaccessibleAsync<T> derives from keel::AsyncInit or keel::AsyncStart privately, "
+                  "protectedly or more than once, so keel can't see it. Derive from it publicly, once: class C : "
+                  "public keel::Component<...>, public keel::AsyncInit");
+};
+
+// What run(fn) returns after a mistake in fn: it converts to anything and supports the
+// usual operators, so that in conversion contexts such as `return app.run(...);` the
+// mistake is the only error. Never defined: such code never compiles.
+struct RunMistake {
+    template <class T>
+    operator T() const;
+
+#define KEEL_RUN_MISTAKE_OPERATOR(op)                         \
+    template <class T>                                        \
+    friend RunMistake operator op(const RunMistake&, const T&); \
+    template <class T>                                        \
+    friend RunMistake operator op(const T&, const RunMistake&);
+    KEEL_RUN_MISTAKE_OPERATOR(==)
+    KEEL_RUN_MISTAKE_OPERATOR(!=)
+    KEEL_RUN_MISTAKE_OPERATOR(<)
+    KEEL_RUN_MISTAKE_OPERATOR(>)
+    KEEL_RUN_MISTAKE_OPERATOR(<=)
+    KEEL_RUN_MISTAKE_OPERATOR(>=)
+    KEEL_RUN_MISTAKE_OPERATOR(+)
+    KEEL_RUN_MISTAKE_OPERATOR(-)
+    KEEL_RUN_MISTAKE_OPERATOR(*)
+    KEEL_RUN_MISTAKE_OPERATOR(/)
+    KEEL_RUN_MISTAKE_OPERATOR(%)
+#undef KEEL_RUN_MISTAKE_OPERATOR
+};
+
+// Diagnostics of App::getComponent<T>().
+template <class T>
+struct NotInApp {
+    static_assert(alwaysFalse<T>,
+                  "keel: getComponent<T>(): the T in NotInApp<T> is neither a component of this App nor provided "
+                  "by one. Keel matches exact types: a component that derives from T must also derive from "
+                  "keel::Provides<T> (for a subclass of a component T, T itself must)");
+};
+template <class Interface, class Providers>
+struct AmbiguousInterface {
+    static_assert(alwaysFalse<Interface>,
+                  "keel: getComponent<I>(): each of the Providers in AmbiguousInterface<I, TypeList<Providers...>> "
+                  "provides I: get a specific one by its own type (if I itself is one of them, compose only one), "
+                  "or make each of them a keel::Alternative<I> and a keel::Conditional");
+};
+
+// Diagnostics of run(fn), each named after the mistake.
+template <class C, class MemberFunction>
+struct RunTargetNotComposed : RunMistake {
+    static_assert(alwaysFalse<C>,
+                  "keel: run(&C::f) calls f on the component C (or on the one component that provides C), and "
+                  "the C in RunTargetNotComposed<C, F> is neither in this App's compose<...> list nor provided by "
+                  "one of its components. Keel matches exact types, and a member function inherited from a base "
+                  "class names the base: derive the component from keel::Provides<Base> too, or call it from a "
+                  "lambda");
+};
+template <class Interface, class Providers>
+struct RunTargetAmbiguous : RunMistake {
+    static_assert(alwaysFalse<Interface>,
+                  "keel: run(&I::f) calls f on the one component that provides I, and each of the Providers in "
+                  "RunTargetAmbiguous<I, TypeList<Providers...>> provides it: call it from a lambda on the one "
+                  "you want, or make each of them a keel::Alternative<I> and a keel::Conditional");
+};
+// A mistake of the composition that run(&C::f) runs into (MixedProviders, or providers of
+// C that can't be used as one: see above); as a base, it is reported once with the others.
+template <class Mistake>
+struct RunTargetMistake : RunMistake, Mistake {};
+template <class C, class Provider>
+struct RunTargetConditional : RunMistake {
+    static_assert(alwaysFalse<C>,
+                  "keel: run(&C::f) calls f on the one component that is or provides C, and the Provider in "
+                  "RunTargetConditional<C, Provider> is a keel::Conditional that configuration may turn off. "
+                  "Call it from a lambda that checks first (app.getComponent<C>() throws keel::Error while it "
+                  "is disabled), or run a member function of a component that is always there");
+};
+template <class MemberFunction>
+struct RunTargetNotCallable : RunMistake {
+    static_assert(alwaysFalse<MemberFunction>,
+                  "keel: run(&C::f) calls f on the component (an lvalue C&) with no arguments, and the F in "
+                  "RunTargetNotCallable<F> can't be called that way");
+};
+template <class Fn>
+struct RunNotCallable : RunMistake {
+    static_assert(alwaysFalse<Fn>,
+                  "keel: run(fn) needs fn callable with no arguments or with the App (App&), or a member function "
+                  "of a component (&C::f); the Fn in RunNotCallable<Fn> is neither");
+};
+template <class T>
+struct NotAnApp : RunMistake {
+    static_assert(alwaysFalse<T>, "keel: keel::run<AppType>(...) needs a keel::App<...>; the T in NotAnApp<T> isn't one");
 };
 
 }  // namespace detail

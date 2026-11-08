@@ -1,4 +1,5 @@
-// keel/impl/type_name.hpp: type names and type ids without RTTI.
+// keel/impl/type_name.hpp: type names and type ids without RTTI, and concat(), which joins
+// names into messages.
 //
 // Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
 //

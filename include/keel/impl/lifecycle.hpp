@@ -1,5 +1,5 @@
-// keel/impl/lifecycle.hpp: the out-of-line definitions of ComponentBase and Registry:
-// lookups, and the init/start/stop/deinit phases with the async scheduler.
+// keel/impl/lifecycle.hpp: the init/start/stop/deinit phases of the Registry, and the
+// scheduler that runs keel::AsyncInit and keel::AsyncStart components on their own threads.
 //
 // Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
 //
@@ -8,8 +8,8 @@
 #pragma once
 
 #include "markers.hpp"
-#include "type_name.hpp"
-#include "component_base.hpp"
+#include "introspection.hpp"
+#include "component.hpp"
 #include "registry.hpp"
 
 #include <chrono>
@@ -17,127 +17,20 @@
 #include <cstddef>
 #include <exception>
 #include <mutex>
-#include <span>
-#include <string>
-#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
 namespace keel {
 
-// ===========================================================================
-// Implementation
-
 namespace detail {
 
-// The caller's own lifecycle is checked first, so a misplaced lookup fails whether or not
-// an optional dependency happens to be composed.
-inline void ComponentBase::checkCanUse(std::string_view accessor, std::string_view dependency) const {
-    if (registry_ == nullptr) {
-        throw Error(concat({"keel: ", accessor, "<", dependency,
-                            ">() called before the component was part of an application (from its constructor?). "
-                            "Dependencies are available from init() on."}));
-    }
-    if (!registry_->initCalled()) throw Error(concat({"keel: ", name_, " used ", dependency, " before init()"}));
-    if (state_ == State::deinitialized) {
-        throw Error(concat({"keel: ", name_, " used ", dependency, " after its deinit()"}));
-    }
-    if (state_ == State::disabled) {
-        throw Error(concat({"keel: ", name_, " used ", dependency, ", but ", name_,
-                            " is disabled (its enabled() returned false)"}));
-    }
-}
-
-inline void* ComponentBase::lookup(TypeId id, std::string_view dependency, bool required) const {
-    checkCanUse(required ? "getComponent" : "findComponent", dependency);
-    const Binding* b = registry_->resolve(id, dependency, name_, required);
-    return b == nullptr ? nullptr : use(*b, dependency);
-}
-
-inline const std::vector<Binding>& ComponentBase::lookupAll(TypeId id, std::string_view dependency) const {
-    checkCanUse("getAll", dependency);
-    return registry_->findAll(id);
-}
-
-inline void* ComponentBase::useIfEnabled(const Binding& b, std::string_view dependency) const {
-    if (b.owner == this || b.owner->state_ == State::disabled) return nullptr;
-    return use(b, dependency);
-}
-
-// Runs before init(): the dependencies come earlier in the init order, so each is
-// initialized or disabled by now (with async components too: see Registry::Schedule).
-// The compile-time checks leave one way to fail: keel::Alternative<>s of which none (for a
-// required dependency) or several are enabled.
-inline void ComponentBase::checkDependencies() const {
-    for (std::size_t i = 0; i < needCount_; ++i) {
-        const Need& need = needs_[i];
-        lookup(need.id, need.name(), need.use == Use::required);
-    }
-}
-
-// resolve() never returns a disabled binding.
-inline void* ComponentBase::use(const Binding& b, std::string_view dependency) const {
-    const State state = b.owner->state_;
-    if (state == State::initialized || state == State::started) return b.object;
-    if (state == State::created) {
-        throw Error(concat({"keel: ", name_, " used ", dependency, " before it was initialized"}));
-    }
-    throw Error(concat({"keel: ", name_, " used ", dependency, " after it was deinitialized"}));
-}
-
-inline const Binding* Registry::resolve(std::span<const Binding> bindings, std::string_view dependency,
-                                        std::string_view user, bool required) const {
-    bool alternatives = !bindings.empty();  // every binding is an alternative
-    bool undecided = false;                 // a binding whose enabled() wasn't asked yet
-    const Binding* enabled = nullptr;       // the last one
-    std::size_t enabledCount = 0;
-    for (const Binding& b : bindings) {
-        const ComponentBase::State state = b.owner->state_;
-        alternatives = alternatives && b.alternative;
-        undecided = undecided || state == ComponentBase::State::created;
-        if (state == ComponentBase::State::disabled) continue;
-        enabled = &b;
-        ++enabledCount;
-    }
-    const bool chosen = !(alternatives && (state_ == State::building || undecided));
-    if (chosen && enabledCount <= 1 && (enabled != nullptr || !required)) return enabled;
-    resolveFailed(bindings, dependency, user, alternatives, undecided, enabledCount);
-}
-
-// The error of a failed resolve(), in the order resolve() checks. Builds the names only
-// here, so that a lookup that succeeds doesn't allocate.
-inline void Registry::resolveFailed(std::span<const Binding> bindings, std::string_view dependency,
-                                    std::string_view user, bool alternatives, bool undecided,
-                                    std::size_t enabledCount) const {
-    const auto names = [&](bool enabledOnly) {
-        std::string out;
-        for (const Binding& b : bindings) {
-            if (enabledOnly && b.owner->state_ == ComponentBase::State::disabled) continue;
-            out += concat({out.empty() ? "" : ", ", b.owner->name_});
-        }
-        return out;
-    };
-    const std::string who = user.empty() ? concat({"keel: getComponent<", dependency, ">()"})
-                                         : concat({"keel: ", user, " uses ", dependency});
-    if (alternatives && state_ == State::building) {
-        throw Error(concat({who, ": init() chooses among its alternatives (", names(false), "); call it after init()"}));
-    }
-    if (alternatives && undecided) {
-        throw Error(concat({who, ": init() failed before choosing among its alternatives (", names(false), ")"}));
-    }
-    if (enabledCount > 1) {
-        throw Error(concat({who, ": several of its alternatives are enabled (only one may be): ", names(true)}));
-    }
-    if (bindings.empty()) throw Error(concat({who, ", which is not part of the application"}));
-    if (alternatives) throw Error(concat({who, ": none of its alternatives (", names(false), ") is enabled"}));
-    throw Error(disabledProvider(who, bindings.front().owner->name_, dependency));
-}
-
-inline void Registry::checkEnabled(const ComponentBase& provider, std::string_view dependency) const {
-    if (provider.state_ != ComponentBase::State::disabled) return;
-    throw Error(disabledProvider(concat({"keel: getComponent<", dependency, ">()"}), provider.name_, dependency));
-}
+// For keel's own tests only: called on the thread that drives the App before each thread
+// keel creates. A test makes it throw std::system_error to simulate a failed creation.
+struct TestHooks {
+    void (*beforeThread)() = nullptr;
+};
+inline TestHooks testHooks;
 
 // Stops every started component, in reverse order.
 inline void Registry::stopAll() noexcept {

@@ -1,5 +1,7 @@
-// keel/impl/app.hpp: keel::App, keel::compose, keel::isValid, keel::requireValid and
-// keel::run.
+// keel/impl/app.hpp: keel::App, and detail::AppImpl, the class App derives from (to expand
+// keel::Bundle<...>s), whose public members are App's: init(), start(), stop(), deinit(),
+// setAsync(), getComponent<T>(), initOrder(), timings() and toDot(). Then keel::compose,
+// keel::isValid, keel::requireValid and keel::run.
 //
 // Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
 //
@@ -8,15 +10,18 @@
 #pragma once
 
 #include "markers.hpp"
+#include "introspection.hpp"
 #include "type_list.hpp"
-#include "split.hpp"
 #include "type_name.hpp"
-#include "component_base.hpp"
-#include "registry.hpp"
-#include "diagnostics.hpp"
-#include "graph.hpp"
-#include "analysis.hpp"
+#include "lists.hpp"
 #include "component.hpp"
+#include "component_info.hpp"
+#include "diagnostics.hpp"
+#include "composition.hpp"
+#include "analysis.hpp"
+#include "registry.hpp"
+#include "storage.hpp"
+#include "lifecycle.hpp"
 
 #include <array>
 #include <cstddef>
@@ -31,6 +36,10 @@ namespace keel {
 
 // ===========================================================================
 // keel::App and keel::compose
+
+// Defined below; detail::isApp and detail::runApp name it.
+template <class... Components>
+class App;
 
 namespace detail {
 
@@ -65,99 +74,6 @@ inline void appendDotEdges(std::string& out, std::size_t from, std::span<const b
         out += attributes.empty() ? ";\n" : concat({" [", attributes, "];\n"});
     }
 }
-
-// What run(fn) returns after a mistake in fn: it converts to anything and supports the
-// usual operators, so that in conversion contexts such as `return app.run(...);` the
-// mistake is the only error. Never defined: such code never compiles.
-struct RunMistake {
-    template <class T>
-    operator T() const;
-
-#define KEEL_RUN_MISTAKE_OPERATOR(op)                         \
-    template <class T>                                        \
-    friend RunMistake operator op(const RunMistake&, const T&); \
-    template <class T>                                        \
-    friend RunMistake operator op(const T&, const RunMistake&);
-    KEEL_RUN_MISTAKE_OPERATOR(==)
-    KEEL_RUN_MISTAKE_OPERATOR(!=)
-    KEEL_RUN_MISTAKE_OPERATOR(<)
-    KEEL_RUN_MISTAKE_OPERATOR(>)
-    KEEL_RUN_MISTAKE_OPERATOR(<=)
-    KEEL_RUN_MISTAKE_OPERATOR(>=)
-    KEEL_RUN_MISTAKE_OPERATOR(+)
-    KEEL_RUN_MISTAKE_OPERATOR(-)
-    KEEL_RUN_MISTAKE_OPERATOR(*)
-    KEEL_RUN_MISTAKE_OPERATOR(/)
-    KEEL_RUN_MISTAKE_OPERATOR(%)
-#undef KEEL_RUN_MISTAKE_OPERATOR
-};
-
-// Diagnostics of App::getComponent<T>().
-template <class T>
-struct NotInApp {
-    static_assert(alwaysFalse<T>,
-                  "keel: getComponent<T>(): the T in NotInApp<T> is neither a component of this App nor provided "
-                  "by one. Keel matches exact types: a component that derives from T must also derive from "
-                  "keel::Provides<T> (for a subclass of a component T, T itself must)");
-};
-template <class Interface, class Providers>
-struct AmbiguousInterface {
-    static_assert(alwaysFalse<Interface>,
-                  "keel: getComponent<I>(): each of the Providers in AmbiguousInterface<I, TypeList<Providers...>> "
-                  "provides I: get a specific one by its own type (if I itself is one of them, compose only one), "
-                  "or make each of them a keel::Alternative<I> and a keel::Conditional");
-};
-
-// Diagnostics of run(fn), each named after the mistake.
-template <class C, class MemberFunction>
-struct RunTargetNotComposed : RunMistake {
-    static_assert(alwaysFalse<C>,
-                  "keel: run(&C::f) calls f on the component C (or on the one component that provides C), and "
-                  "the C in RunTargetNotComposed<C, F> is neither in this App's compose<...> list nor provided by "
-                  "one of its components. Keel matches exact types, and a member function inherited from a base "
-                  "class names the base: derive the component from keel::Provides<Base> too, or call it from a "
-                  "lambda");
-};
-template <class Interface, class Providers>
-struct RunTargetAmbiguous : RunMistake {
-    static_assert(alwaysFalse<Interface>,
-                  "keel: run(&I::f) calls f on the one component that provides I, and each of the Providers in "
-                  "RunTargetAmbiguous<I, TypeList<Providers...>> provides it: call it from a lambda on the one "
-                  "you want, or make each of them a keel::Alternative<I> and a keel::Conditional");
-};
-// A mistake of the composition that run(&C::f) runs into (MixedProviders, or providers of
-// C that can't be used as one: see above); as a base, it is reported once with the others.
-template <class Mistake>
-struct RunTargetMistake : RunMistake, Mistake {};
-template <class C, class Provider>
-struct RunTargetConditional : RunMistake {
-    static_assert(alwaysFalse<C>,
-                  "keel: run(&C::f) calls f on the one component that is or provides C, and the Provider in "
-                  "RunTargetConditional<C, Provider> is a keel::Conditional that configuration may turn off. "
-                  "Call it from a lambda that checks first (app.getComponent<C>() throws keel::Error while it "
-                  "is disabled), or run a member function of a component that is always there");
-};
-template <class MemberFunction>
-struct RunTargetNotCallable : RunMistake {
-    static_assert(alwaysFalse<MemberFunction>,
-                  "keel: run(&C::f) calls f on the component (an lvalue C&) with no arguments, and the F in "
-                  "RunTargetNotCallable<F> can't be called that way");
-};
-template <class Fn>
-struct RunNotCallable : RunMistake {
-    static_assert(alwaysFalse<Fn>,
-                  "keel: run(fn) needs fn callable with no arguments or with the App (App&), or a member function "
-                  "of a component (&C::f); the Fn in RunNotCallable<Fn> is neither");
-};
-template <class T>
-struct NotAnApp : RunMistake {
-    static_assert(alwaysFalse<T>, "keel: keel::run<AppType>(...) needs a keel::App<...>; the T in NotAnApp<T> isn't one");
-};
-
-// A class whose operator() is a single non-template function (not a generic lambda).
-template <class F>
-inline constexpr bool hasPlainCallOperator = requires { &F::operator(); };
-
 
 // The composition (bundles already expanded) is checked when the class is instantiated.
 // Each failed check is one error.
@@ -331,8 +247,8 @@ protected:
 
     // start, then fn(self), fn(), or a member function of one of the components
     // (&Server::serve), whose target is resolved first: an alternative that isn't chosen
-    // throws before anything starts. A mistake gives exactly one error: one of the diagnostics above, or
-    // the compiler's own error inside a generic callable.
+    // throws before anything starts. A mistake gives exactly one error: one of the run
+    // diagnostics (diagnostics.hpp), or the compiler's own error inside a generic callable.
     template <class Self, class Fn>
     static decltype(auto) call([[maybe_unused]] Self& self, Registry& registry, Fn&& fn) {
         using F = std::remove_cvref_t<Fn>;
@@ -542,6 +458,21 @@ private:
     Storage<typename Info::Sorted> storage_;
 };
 
+template <class T>
+inline constexpr bool isApp = false;
+template <class... Cs>
+inline constexpr bool isApp<App<Cs...>> = true;
+
+template <class AppType, class Fn, class... Args>
+auto runApp(Fn&& fn, Args&&... args) {
+    if constexpr (!isApp<AppType>) {
+        return NotAnApp<AppType>{};
+    } else {
+        AppType app(std::forward<Args>(args)...);
+        return app.run(std::forward<Fn>(fn));
+    }
+}
+
 }  // namespace detail
 
 /// A statically composed application. Components (and keel::Bundle<...>s of them) in any
@@ -590,13 +521,6 @@ public:
     }
 };
 
-namespace detail {
-template <class T>
-inline constexpr bool isApp = false;
-template <class... Cs>
-inline constexpr bool isApp<App<Cs...>> = true;
-}  // namespace detail
-
 /// `auto app = keel::compose<Settings, Console, Greeter>(argc, argv);`
 /// Each component constructible from the arguments receives them; the others are
 /// default-constructed. The list may contain keel::Bundle<...>s.
@@ -630,18 +554,6 @@ inline constexpr bool isValid = detail::Analysis<detail::ExpandBundles<Component
 /// It checks what keel::isValid checks.
 template <class... Components>
 inline constexpr bool requireValid = sizeof(App<Components...>) > 0;
-
-namespace detail {
-template <class AppType, class Fn, class... Args>
-auto runApp(Fn&& fn, Args&&... args) {
-    if constexpr (!isApp<AppType>) {
-        return NotAnApp<AppType>{};
-    } else {
-        AppType app(std::forward<Args>(args)...);
-        return app.run(std::forward<Fn>(fn));
-    }
-}
-}  // namespace detail
 
 /// Constructs AppType from args and runs it (see App::run), e.g. when main() picks one of
 /// several compositions: `return keel::run<ServerApp>(&Server::serve, argc, argv);`

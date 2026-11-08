@@ -1,5 +1,7 @@
-// keel/impl/split.hpp: the kinds of entries of a keel::Component<...> list (Split),
-// the definitions of keel::Provides and keel::Alternative, and traits of components.
+// keel/impl/lists.hpp: reading the two lists a user writes: the entries of a
+// keel::Component<...> list, by kind (Split), and the keel::Bundle<...>s of a compose<...>
+// list (ExpandBundles). Also the definitions of keel::Provides and keel::Alternative, here
+// because they check their interface with couldBeComponent, which this part defines.
 //
 // Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
 //
@@ -135,11 +137,57 @@ template <class T>
 inline constexpr bool couldBeComponent =
     std::is_class_v<T> && !std::is_const_v<T> && !std::is_volatile_v<T> && !isDependencyMarker<T>;
 
+template <class C>
+inline constexpr bool isBundle = false;
+template <class... Cs>
+inline constexpr bool isBundle<Bundle<Cs...>> = true;
+
+// The result of expanding the keel::Bundle<...>s of a compose<...> list: the components,
+// and the bundles reached more than once in the tree (each once). A repeated bundle is
+// expanded only the first time, so it is reported as one DuplicateBundle<B>, not as a
+// duplicate of each of its components.
+template <class Components, class RepeatedBundles = TypeList<>>
+struct Expanded {
+    using components = Components;
+    using repeated = RepeatedBundles;
+};
+
+// Expands the list left to right, in place: a bundle's components take its position.
+// Seen: the bundles expanded so far.
+template <class Seen, class Repeated, class Out, class... Rest>
+struct Expand : Expanded<Out, Repeated> {};
+template <bool bundle, class Seen, class Repeated, class Out, class First, class... Rest>
+struct ExpandFirst : Expand<Seen, Repeated, Append<Out, First>, Rest...> {};
+template <class Seen, class Repeated, class Out, class First, class... Rest>
+struct Expand<Seen, Repeated, Out, First, Rest...>
+    : ExpandFirst<isBundle<First>, Seen, Repeated, Out, First, Rest...> {};
+template <class Seen, class Repeated, class Out, class... Inner, class... Rest>
+struct ExpandFirst<true, Seen, Repeated, Out, Bundle<Inner...>, Rest...>
+    : std::conditional_t<
+          contains<Bundle<Inner...>, Seen>,
+          Expand<Seen,
+                 std::conditional_t<contains<Bundle<Inner...>, Repeated>, Repeated, Append<Repeated, Bundle<Inner...>>>,
+                 Out, Rest...>,
+          Expand<Append<Seen, Bundle<Inner...>>, Repeated, Out, Inner..., Rest...>> {};
+
+// A list without bundles is used as is.
+template <bool anyBundle, class... Cs>
+struct ExpandImpl {
+    using type = Expanded<TypeList<Cs...>>;
+};
+template <class... Cs>
+struct ExpandImpl<true, Cs...> {
+    using type = Expanded<typename Expand<TypeList<>, TypeList<>, TypeList<>, Cs...>::components,
+                          typename Expand<TypeList<>, TypeList<>, TypeList<>, Cs...>::repeated>;
+};
+template <class... Cs>
+using ExpandBundles = typename ExpandImpl<(isBundle<Cs> || ...), Cs...>::type;
+
 }  // namespace detail
 
-// See the declaration above. Empty. I is checked in the constructor rather than in the class
-// body: a failed check there would make the derived component invalid, and every later use
-// of it would add an error.
+// See the declaration in markers.hpp. Empty. I is checked in the constructor rather than in
+// the class body: a failed check there would make the derived component invalid, and every
+// later use of it would add an error.
 template <class I>
 struct Provides {
     constexpr Provides() noexcept {
@@ -156,7 +204,7 @@ namespace detail {
 struct AlternativeMarker {};
 }  // namespace detail
 
-// See the declaration above. Checked as keel::Provides<I> is.
+// See the declaration in markers.hpp. Checked as keel::Provides<I> is.
 template <class I>
 struct Alternative : detail::AlternativeMarker {
     constexpr Alternative() noexcept {
@@ -166,34 +214,5 @@ struct Alternative : detail::AlternativeMarker {
                       "...). Write keel::Alternative<Cache>, not keel::Alternative<const Cache>.");
     }
 };
-
-namespace detail {
-
-// C is a keel::Conditional that keel can ask: it derives from it publicly and once.
-// (Privately or twice is InaccessibleConditional, at compose time.) False for an
-// incomplete C.
-template <class C>
-inline constexpr bool isConditional = std::is_convertible_v<C*, Conditional*>;
-
-// C derives from keel::AsyncInit / keel::AsyncStart publicly and once. (Privately or twice
-// is InaccessibleAsync, at compose time.)
-template <class C>
-inline constexpr bool hasAsyncInit = std::is_convertible_v<C*, AsyncInit*>;
-template <class C>
-inline constexpr bool hasAsyncStart = std::is_convertible_v<C*, AsyncStart*>;
-
-// A C can be used as an I: I could be a component (above) and is C itself or a public,
-// unambiguous base of C. A pointer conversion checks access and ambiguity, and is simply
-// false for an incomplete I (C can't derive from it then).
-template <class C, class I>
-constexpr bool implements() {
-    if constexpr (couldBeComponent<I>) {
-        return std::is_convertible_v<C*, I*>;
-    } else {
-        return false;
-    }
-}
-
-}  // namespace detail
 
 }  // namespace keel

@@ -1,4 +1,6 @@
-// keel/impl/type_list.hpp: type lists, and the expansion of keel::Bundle<...>s.
+// keel/impl/type_list.hpp: type lists (TypeList, contains, UniqueList, Concat, Append,
+// FirstOr, KeepIf, Reorder) and other type-level helpers (alwaysFalse, MemberOf,
+// hasPlainCallOperator).
 //
 // Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
 //
@@ -6,9 +8,10 @@
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
 
-#include "markers.hpp"
-
+#include <cstddef>
+#include <tuple>
 #include <type_traits>
+#include <utility>
 
 namespace keel {
 
@@ -52,11 +55,6 @@ using Concat = typename ConcatImpl<Lists...>::type;
 template <class T>
 inline constexpr bool alwaysFalse = false;
 
-template <class C>
-inline constexpr bool isBundle = false;
-template <class... Cs>
-inline constexpr bool isBundle<Bundle<Cs...>> = true;
-
 template <class List, class T>
 struct AppendImpl;
 template <class... Ts, class T>
@@ -65,47 +63,6 @@ struct AppendImpl<TypeList<Ts...>, T> {
 };
 template <class List, class T>
 using Append = typename AppendImpl<List, T>::type;
-
-// The result of expanding the keel::Bundle<...>s of a compose<...> list: the components,
-// and the bundles reached more than once in the tree (each once). A repeated bundle is
-// expanded only the first time, so it is reported as one DuplicateBundle<B>, not as a
-// duplicate of each of its components.
-template <class Components, class RepeatedBundles = TypeList<>>
-struct Expanded {
-    using components = Components;
-    using repeated = RepeatedBundles;
-};
-
-// Expands the list left to right, in place: a bundle's components take its position.
-// Seen: the bundles expanded so far.
-template <class Seen, class Repeated, class Out, class... Rest>
-struct Expand : Expanded<Out, Repeated> {};
-template <bool bundle, class Seen, class Repeated, class Out, class First, class... Rest>
-struct ExpandFirst : Expand<Seen, Repeated, Append<Out, First>, Rest...> {};
-template <class Seen, class Repeated, class Out, class First, class... Rest>
-struct Expand<Seen, Repeated, Out, First, Rest...>
-    : ExpandFirst<isBundle<First>, Seen, Repeated, Out, First, Rest...> {};
-template <class Seen, class Repeated, class Out, class... Inner, class... Rest>
-struct ExpandFirst<true, Seen, Repeated, Out, Bundle<Inner...>, Rest...>
-    : std::conditional_t<
-          contains<Bundle<Inner...>, Seen>,
-          Expand<Seen,
-                 std::conditional_t<contains<Bundle<Inner...>, Repeated>, Repeated, Append<Repeated, Bundle<Inner...>>>,
-                 Out, Rest...>,
-          Expand<Append<Seen, Bundle<Inner...>>, Repeated, Out, Inner..., Rest...>> {};
-
-// A list without bundles is used as is.
-template <bool anyBundle, class... Cs>
-struct ExpandImpl {
-    using type = Expanded<TypeList<Cs...>>;
-};
-template <class... Cs>
-struct ExpandImpl<true, Cs...> {
-    using type = Expanded<typename Expand<TypeList<>, TypeList<>, TypeList<>, Cs...>::components,
-                          typename Expand<TypeList<>, TypeList<>, TypeList<>, Cs...>::repeated>;
-};
-template <class... Cs>
-using ExpandBundles = typename ExpandImpl<(isBundle<Cs> || ...), Cs...>::type;
 
 // The first type of a TypeList, or Fallback if it is empty.
 template <class List, class Fallback>
@@ -127,6 +84,27 @@ template <class R, class C>
 struct MemberOf<R C::*> {
     using type = C;
 };
+
+// The types of a list whose entry in Keep is true, and the types of a list in the order of
+// Index. Class templates at namespace scope rather than member functions of Composition:
+// MSVC doesn't expand a pack inside a member function's return type there.
+template <class List, auto Keep, class Sequence>
+struct KeepIf;
+template <class... Ts, auto Keep, std::size_t... Is>
+struct KeepIf<TypeList<Ts...>, Keep, std::index_sequence<Is...>> {
+    using type = Concat<std::conditional_t<Keep[Is], TypeList<Ts>, TypeList<>>...>;
+};
+
+template <class List, auto Index, class Sequence>
+struct Reorder;
+template <class... Ts, auto Index, std::size_t... Is>
+struct Reorder<TypeList<Ts...>, Index, std::index_sequence<Is...>> {
+    using type = TypeList<std::tuple_element_t<Index[Is], std::tuple<Ts...>>...>;
+};
+
+// A class whose operator() is a single non-template function (not a generic lambda).
+template <class F>
+inline constexpr bool hasPlainCallOperator = requires { &F::operator(); };
 
 }  // namespace detail
 

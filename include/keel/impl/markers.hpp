@@ -1,6 +1,7 @@
-// keel/impl/markers.hpp: the public vocabulary: keel::Error, Phase and Timing, the
-// dependency markers (Optional, After, All, Bundle) and the base classes (Provides, Alternative,
-// AsyncInit, AsyncStart, Conditional).
+// keel/impl/markers.hpp: the vocabulary for declaring components: keel::Error, the
+// dependency markers (Optional, After, All), keel::Bundle, and the base classes a component
+// derives from next to keel::Component<...> (Provides, Alternative, AsyncInit, AsyncStart,
+// Conditional). Provides and Alternative are defined in lists.hpp, after the check of I.
 //
 // Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
 //
@@ -8,9 +9,7 @@
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
 
-#include <chrono>
 #include <stdexcept>
-#include <string_view>
 
 namespace keel {
 
@@ -19,32 +18,6 @@ namespace keel {
 class Error : public std::logic_error {
 public:
     using std::logic_error::logic_error;
-};
-
-/// A lifecycle hook of a component, as recorded in keel::Timing.
-enum class Phase { init, start, stop, deinit };
-
-/// "init", "start", "stop" or "deinit".
-constexpr std::string_view toString(Phase phase) noexcept {
-    switch (phase) {
-        case Phase::init:
-            return "init";
-        case Phase::start:
-            return "start";
-        case Phase::stop:
-            return "stop";
-        case Phase::deinit:
-            return "deinit";
-    }
-    return "?";
-}
-
-/// How long one lifecycle call of one component took (App::timings()).
-struct Timing {
-    std::string_view component;            // the component's name, as in App::initOrder()
-    Phase phase = Phase::init;
-    std::chrono::nanoseconds duration{};   // measured with std::chrono::steady_clock
-    bool failed = false;                   // the call threw (init() or start()); the rollback follows
 };
 
 /// Marks a dependency in keel::Component<...> as optional: the component works without
@@ -101,7 +74,7 @@ struct After {};
 ///   class FakeClock : public Clock { ... };
 ///   keel::compose<Service, FakeClock>();  // Service's dependency on Clock gets FakeClock
 template <class I>
-struct Provides;  // defined below, after the check of I
+struct Provides;  // defined in lists.hpp, after the check of I
 
 /// Like keel::Provides<I>, for one of several implementations of I that configuration
 /// chooses between at runtime. A base class, like keel::Provides<I>; each alternative is
@@ -134,7 +107,7 @@ struct Provides;  // defined below, after the check of I
 /// When the implementations need the same dependencies, a plain component that creates the
 /// configured one in init() is simpler (docs/runtime-decisions.md).
 template <class I>
-struct Alternative;  // defined below, after the check of I
+struct Alternative;  // defined in lists.hpp, after the check of I
 
 /// Every component that provides the interface I (derives from keel::Provides<I> or
 /// keel::Alternative<I>, or is I itself), for plug-in style lists: health checks, routes,
@@ -225,12 +198,7 @@ struct AsyncStart {};
 template <class... Components>
 struct Bundle {};
 
-template <class... Dependencies>
-class Component;
-
-template <class... Components>
-class App;
-
+// Declared for Conditional's friend declaration.
 namespace detail {
 class Registry;
 }
