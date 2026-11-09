@@ -134,10 +134,10 @@ Details: [Lifecycle](lifecycle.md), [Inspecting and testing](inspection-and-test
 - **Names differ by compiler.** `keel::typeName<T>()`, `initOrder()`, `Timing::component`,
   `toDot()` and error messages use the type name as the compiler spells it: anonymous
   namespaces, template arguments and spacing vary between Clang, GCC and MSVC.
-- **MSVC compile errors.** keel's errors name the mistake and the component on MSVC too,
-  but some types in them appear as internal aliases (`MissingDependency<Server,
-  ...::check::T>` where GCC and Clang show `MissingDependency<Server, Logger>`). keel's own
-  compile-fail tests check the diagnostic's name there, not every type in it.
+- **MSVC compile errors.** Most of keel's errors show the real types on MSVC too
+  (`MissingDependency<Server, Logger>`). A few, around bundles, `run(&C::f)` targets and
+  `Alternative<I>` without `Conditional`, may still show a type as an internal name, so
+  keel's own compile-fail tests accept the diagnostic's name alone there.
 - **CMake.** Use `add_subdirectory` or `FetchContent`, or install keel and use
   `find_package(keel CONFIG)`; either way, link `keel::keel`. The installed package accepts
   the same minor version only (before 1.0, a new minor version may change the API).

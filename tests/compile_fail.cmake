@@ -27,10 +27,9 @@ if(result EQUAL 0)
     message(FATAL_ERROR "${TARGET} compiled, but it must not")
 endif()
 if(NOT output MATCHES "${PATTERN}")
-    # MSVC (the compiler without COUNT_ERRORS) prints some template arguments of keel's
-    # diagnostics as internal aliases (MissingDependency<Server, ...::check::T> rather than
-    # MissingDependency<Server, Logger>). There, a pattern that names a diagnostic passes
-    # if keel's static_assert fired and the diagnostic's name appears.
+    # MSVC (the compiler without COUNT_ERRORS) still prints some template arguments as
+    # internal names (bundles, run targets, AlternativeNotConditional). There, a pattern that
+    # names a diagnostic passes if keel's static_assert fired and the diagnostic's name appears.
     string(REGEX MATCH "[A-Za-z_][A-Za-z0-9_]*<" diagnostic "${PATTERN}")
     if(COUNT_ERRORS OR NOT diagnostic OR NOT output MATCHES "keel:" OR NOT output MATCHES "${diagnostic}")
         message(FATAL_ERROR "${TARGET} failed without the expected diagnostic '${PATTERN}':\n${output}")

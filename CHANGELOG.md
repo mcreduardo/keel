@@ -9,6 +9,8 @@ may change the API.
 
 ### Changed
 
+- On MSVC, most compile errors now show the real types (`MissingDependency<Server, Logger>`)
+  instead of internal aliases.
 - `App::setAsync(false)` is `App::disableAsyncForDebugging()`. There is no way to turn async
   back on (it is the default); after `init()` it throws
   `keel: disableAsyncForDebugging() must be called before init()`.

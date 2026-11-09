@@ -205,9 +205,9 @@ struct Composition<TypeList<Cs...>> {
     using Derived = typename KeepIf<TypeList<Cs...>, derived<C, T>, Indices>::type;
 
     // Passed if fine, else the named failure (diagnostics.hpp), wrapped in an Outcome<>. The
-    // types a failure names are this function's template parameters, not local aliases: MSVC
-    // would print the aliases' names.
-    template <class C, class Entry, class T = typename Split<Entry>::target>
+    // types a failure names are defaulted template parameters of this function: MSVC prints
+    // those as the types, but an alias, or a class template's parameter, by its name.
+    template <class Self, class Entry, class C = typename Self::type, class T = typename Split<Entry>::target>
     static auto check() {
         constexpr Use use = Split<Entry>::use;
         constexpr bool collection = use == Use::all || use == Use::optionalAll;
@@ -254,7 +254,7 @@ struct Composition<TypeList<Cs...>> {
         }
     }
     template <class C, class Entry>
-    using Check = typename decltype(check<C, Entry>())::type;
+    using Check = typename decltype(check<std::type_identity<C>, Entry>())::type;
 
     // For several non-alternative providers: none, so it is reported as ambiguous, not as a cycle too.
     template <class C, class Entry>
