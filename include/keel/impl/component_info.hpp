@@ -81,6 +81,10 @@ inline constexpr bool hasAsyncInit = std::is_convertible_v<C*, AsyncInit*>;
 template <class C>
 inline constexpr bool hasAsyncStart = std::is_convertible_v<C*, AsyncStart*>;
 
+// A base class of C, but not a public one, or more than once. Only for a complete C.
+template <class Base, class C>
+inline constexpr bool hiddenBase = std::is_base_of_v<Base, C> && !std::is_convertible_v<C*, Base*>;
+
 // The pointer conversion checks access and ambiguity, and is false for an incomplete I.
 template <class C, class I>
 constexpr bool implements() {

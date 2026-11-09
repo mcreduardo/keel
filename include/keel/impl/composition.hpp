@@ -23,22 +23,21 @@ namespace detail {
 // Asked for each I something refers to, since C++20 can't list a class's bases. Traits only:
 // evaluated for every component and referred type. The mistakes come last (`>= notDerived`).
 enum class Provision : unsigned char { none, declared, notDerived, inaccessible };
-template <class C, class I, bool interface = couldBeComponent<I>>
-inline constexpr Provision provision = Provision::none;
+// Marker is keel::Provides or keel::Alternative.
+template <template <class> class Marker, class C, class I>
+constexpr Provision provisionVia() {
+    if constexpr (!couldBeComponent<I>) {
+        return Provision::none;
+    } else if constexpr (std::is_convertible_v<C*, Marker<I>*>) {
+        return std::is_convertible_v<C*, I*> ? Provision::declared : Provision::notDerived;
+    } else {
+        return hiddenBase<Marker<I>, C> ? Provision::inaccessible : Provision::none;
+    }
+}
 template <class C, class I>
-inline constexpr Provision provision<C, I, true> =
-    std::is_convertible_v<C*, Provides<I>*>
-        ? (std::is_convertible_v<C*, I*> ? Provision::declared : Provision::notDerived)
-        : (std::is_base_of_v<Provides<I>, C> ? Provision::inaccessible : Provision::none);
-
-// The same for keel::Alternative<I>.
-template <class C, class I, bool interface = couldBeComponent<I>>
-inline constexpr Provision alternativeProvision = Provision::none;
+inline constexpr Provision provision = provisionVia<Provides, C, I>();
 template <class C, class I>
-inline constexpr Provision alternativeProvision<C, I, true> =
-    std::is_convertible_v<C*, Alternative<I>*>
-        ? (std::is_convertible_v<C*, I*> ? Provision::declared : Provision::notDerived)
-        : (std::is_base_of_v<Alternative<I>, C> ? Provision::inaccessible : Provision::none);
+inline constexpr Provision alternativeProvision = provisionVia<Alternative, C, I>();
 
 template <class C, class I>
 inline constexpr bool providesBase = provision<C, I> == Provision::declared || provision<C, I> == Provision::notDerived;
@@ -73,11 +72,9 @@ inline constexpr bool isDependencyEntry =
     (Split<Entry>::use == Use::required || Split<Entry>::use == Use::optional ||
      Split<Entry>::use == Use::ordering || Split<Entry>::use == Use::all || Split<Entry>::use == Use::optionalAll) &&
     couldBeComponent<typename Split<Entry>::target> && !isBundle<typename Split<Entry>::target>;
-template <class Entry>
-inline constexpr bool isReferral = isDependencyEntry<Entry>;
 
 template <class T, class Entry>
-inline constexpr bool isDependencyOn = isReferral<Entry> && std::is_same_v<typename Split<Entry>::target, T>;
+inline constexpr bool isDependencyOn = isDependencyEntry<Entry> && std::is_same_v<typename Split<Entry>::target, T>;
 template <class T, class Entries>
 inline constexpr bool hasDependencyOn = false;
 template <class T, class... Entries>
@@ -85,18 +82,6 @@ inline constexpr bool hasDependencyOn<T, TypeList<Entries...>> = (isDependencyOn
 // A list with a duplicate isn't checked further.
 template <class T, class C>
 inline constexpr bool dependsOn = uniqueEntriesOf<C> && hasDependencyOn<T, EntriesOf<C>>;
-
-template <class T, class... Entries>
-struct FirstDependencyOn {
-    using type = void;
-};
-template <class T, class Entry, class... Entries>
-struct FirstDependencyOn<T, Entry, Entries...>
-    : std::conditional_t<isDependencyOn<T, Entry>, std::type_identity<Entry>, FirstDependencyOn<T, Entries...>> {};
-template <class T, class List>
-struct FirstDependencyIn;
-template <class T, class... Entries>
-struct FirstDependencyIn<T, TypeList<Entries...>> : FirstDependencyOn<T, Entries...> {};
 
 template <class List>
 struct ProviderFailuresOf;
@@ -127,11 +112,11 @@ struct Composition<TypeList<Cs...>> {
     template <class T>
     static constexpr std::size_t providerCount = count(providers<T>);
 
-    template <class T, std::size_t... Is>
-    static auto providersOf(std::index_sequence<Is...>)
-        -> Concat<std::conditional_t<providers<T>[Is], TypeList<At<Is>>, TypeList<>>...>;
+    // The entries of List (default: the components) whose bit in keep is set.
+    template <Row keep, class List = TypeList<Cs...>>
+    using Keep = typename KeepIf<List, keep, std::make_index_sequence<size>>::type;
     template <class T>
-    using Providers = decltype(providersOf<T>(std::make_index_sequence<size>{}));
+    using Providers = Keep<providers<T>>;
 
     // Several providers are fine for one T if each is a keel::Alternative<T>.
     template <class T>
@@ -143,14 +128,10 @@ struct Composition<TypeList<Cs...>> {
     // Reported once per T as MixedProviders, not once per place that needs one T.
     template <class T>
     static constexpr bool mixedProviders = alternativeCount<T> > 0 && alternativeCount<T> < providerCount<T>;
-    template <class T, std::size_t... Is>
-    static auto mixedOf(std::index_sequence<Is...>)
-        -> MixedProviders<T,
-                          Concat<std::conditional_t<providers<T>[Is] && !alternatives<T>[Is], TypeList<At<Is>>,
-                                                    TypeList<>>...>,
-                          Concat<std::conditional_t<alternatives<T>[Is], TypeList<At<Is>>, TypeList<>>...>>;
     template <class T>
-    using Mixed = decltype(mixedOf<T>(std::make_index_sequence<size>{}));
+    static constexpr Row plainProviders{(isProvider<T, Cs> && !isAlternative<T, Cs>)...};
+    template <class T>
+    using Mixed = MixedProviders<T, Keep<plainProviders<T>>, Keep<alternatives<T>>>;
 
     // What a lookup of T finds, in init order.
     template <class T>
@@ -171,11 +152,8 @@ struct Composition<TypeList<Cs...>> {
     static constexpr Row broken{brokenProvider<Cs, T>...};
     template <class T>
     static constexpr std::size_t brokenCount = count(broken<T>);
-    template <class T, std::size_t... Is>
-    static auto brokenOf(std::index_sequence<Is...>)
-        -> Concat<std::conditional_t<broken<T>[Is], TypeList<ProviderFailure<At<Is>, T>>, TypeList<>>...>;
     template <class T>
-    using Broken = typename ProviderFailuresOf<decltype(brokenOf<T>(std::make_index_sequence<size>{}))>::type;
+    using Broken = typename ProviderFailuresOf<Keep<broken<T>, TypeList<ProviderFailure<Cs, T>...>>>::type;
 
     template <class T>
     static constexpr Row dependents{dependsOn<T, Cs>...};
@@ -186,16 +164,11 @@ struct Composition<TypeList<Cs...>> {
         while (i < size && !row[i]) ++i;
         return i;
     }
-    // Entry of C is where the broken providers of T are reported.
-    template <class C, class Entry, class T>
-    static constexpr bool reportsBroken() {
-        constexpr std::size_t i = first(dependents<T>);
-        if constexpr (i < size) {
-            return std::is_same_v<C, At<i>> && std::is_same_v<Entry, typename FirstDependencyIn<T, EntriesOf<C>>::type>;
-        } else {
-            return false;
-        }
-    }
+    template <class C>
+    static constexpr std::size_t index = first(Row{std::is_same_v<C, Cs>...});
+    // C reports them; its list is unique, so the entry checked is its only one on T.
+    template <class C, class T>
+    static constexpr bool reportsBroken = first(dependents<T>) == index<C>;
     template <class T>
     using RootBroken = std::conditional_t<(brokenCount<T> == 0 || dependentCount<T> > 0), Passed<T>, Broken<T>>;
 
@@ -203,20 +176,14 @@ struct Composition<TypeList<Cs...>> {
     static constexpr Row others{(!std::is_same_v<C, Cs> && isProvider<T, Cs>)...};
     template <class C, class T>
     static constexpr Row unconditionalOthers{(!std::is_same_v<C, Cs> && isProvider<T, Cs> && !isConditional<Cs>)...};
-    template <class C, class T, std::size_t... Is>
-    static auto othersOf(std::index_sequence<Is...>)
-        -> Concat<std::conditional_t<others<C, T>[Is], TypeList<At<Is>>, TypeList<>>...>;
     template <class C, class T>
-    using Others = decltype(othersOf<C, T>(std::make_index_sequence<size>{}));
+    using Others = Keep<others<C, T>>;
 
     // For a dependency of C on T: the likely forgotten keel::Provides<T>.
     template <class C, class T>
     static constexpr Row derived{(!std::is_same_v<C, Cs> && !isProvider<T, Cs> && implements<Cs, T>())...};
-    template <class C, class T, std::size_t... Is>
-    static auto derivedOf(std::index_sequence<Is...>)
-        -> Concat<std::conditional_t<derived<C, T>[Is], TypeList<At<Is>>, TypeList<>>...>;
     template <class C, class T>
-    using Derived = decltype(derivedOf<C, T>(std::make_index_sequence<size>{}));
+    using Derived = Keep<derived<C, T>>;
 
     // Passed<...> if fine, else the named failure (diagnostics.hpp), wrapped in an Outcome<>.
     template <class C, class Entry>
@@ -239,7 +206,7 @@ struct Composition<TypeList<Cs...>> {
         } else if constexpr (!couldBeComponent<T>) {
             return Outcome<InvalidDependency<C, Entry>>{};
         } else if constexpr (brokenCount<T> > 0) {
-            if constexpr (reportsBroken<C, Entry, T>()) {
+            if constexpr (reportsBroken<C, T>) {
                 return Outcome<Broken<T>>{};
             } else {
                 return Outcome<Passed<C, Entry>>{};
@@ -315,7 +282,7 @@ struct Composition<TypeList<Cs...>> {
     static constexpr bool acyclic = order.count == size;
     static constexpr Row onCycle = acyclic ? Row{} : componentsOnCycles(graph, order.placed);
 
-    using Cycle = typename KeepIf<TypeList<Cs...>, onCycle, std::make_index_sequence<size>>::type;
+    using Cycle = Keep<onCycle>;
     using Sorted = std::conditional_t<
         acyclic, typename Reorder<TypeList<Cs...>, order.index, std::make_index_sequence<size>>::type, TypeList<Cs...>>;
 };

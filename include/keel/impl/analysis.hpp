@@ -21,24 +21,6 @@ namespace keel {
 
 namespace detail {
 
-template <class T, bool component = derivesFromComponent<T>>
-inline constexpr bool abstractComponent = false;
-template <class T>
-inline constexpr bool abstractComponent<T, true> = std::is_abstract_v<T>;
-
-// Only read for a component (a complete class).
-template <class T, bool component = derivesFromComponent<T>>
-inline constexpr bool inaccessibleAsync = false;
-template <class T>
-inline constexpr bool inaccessibleAsync<T, true> = (std::is_base_of_v<AsyncInit, T> && !hasAsyncInit<T>) ||
-                                                   (std::is_base_of_v<AsyncStart, T> && !hasAsyncStart<T>);
-
-// Only read for a component (a complete class).
-template <class T, bool component = derivesFromComponent<T>>
-inline constexpr bool inaccessibleConditional = false;
-template <class T>
-inline constexpr bool inaccessibleConditional<T, true> = std::is_base_of_v<Conditional, T> && !isConditional<T>;
-
 template <class... Cs>
 struct ListInfo {
     static constexpr std::size_t size = sizeof...(Cs);
@@ -54,17 +36,28 @@ struct ListInfo {
         return n;
     }();
 
-    // A type listed twice is reported once, at its second entry.
+    // A type listed twice is reported once, at its second entry. The traits after
+    // NotAComponent need a complete class.
     template <class C, std::size_t I>
-    using Check = std::conditional_t<
-        earlier<I> == 1, DuplicateComponent<C>,
-        std::conditional_t<
-            earlier<I> == 0 && !derivesFromComponent<C>, NotAComponent<C>,
-            std::conditional_t<
-                earlier<I> == 0 && inaccessibleConditional<C>, InaccessibleConditional<C>,
-                std::conditional_t<earlier<I> == 0 && inaccessibleAsync<C>, InaccessibleAsync<C>,
-                                   std::conditional_t<earlier<I> == 0 && abstractComponent<C>, AbstractComponent<C>,
-                                                      Passed<C, std::integral_constant<std::size_t, I>>>>>>>;
+    static auto check() {
+        if constexpr (earlier<I> == 1) {
+            return Outcome<DuplicateComponent<C>>{};
+        } else if constexpr (earlier<I> > 1) {
+            return Outcome<Passed<C, std::integral_constant<std::size_t, I>>>{};
+        } else if constexpr (!derivesFromComponent<C>) {
+            return Outcome<NotAComponent<C>>{};
+        } else if constexpr (hiddenBase<Conditional, C>) {
+            return Outcome<InaccessibleConditional<C>>{};
+        } else if constexpr (hiddenBase<AsyncInit, C> || hiddenBase<AsyncStart, C>) {
+            return Outcome<InaccessibleAsync<C>>{};
+        } else if constexpr (std::is_abstract_v<C>) {
+            return Outcome<AbstractComponent<C>>{};
+        } else {
+            return Outcome<Passed<C, std::integral_constant<std::size_t, I>>>{};
+        }
+    }
+    template <class C, std::size_t I>
+    using Check = typename decltype(check<C, I>())::type;
 };
 
 // Each check is an outcome type: compose<...> derives from them (a failure's static_assert

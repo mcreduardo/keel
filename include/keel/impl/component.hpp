@@ -93,22 +93,23 @@ private:
 template <class... Dependencies>
 class Component : public detail::ComponentBase {
 public:
-    using RequiredDependencies = detail::Concat<typename detail::Split<Dependencies>::required...>;
-    using OptionalDependencies = detail::Concat<typename detail::Split<Dependencies>::optional...>;
-    using AfterDependencies = detail::Concat<typename detail::Split<Dependencies>::after...>;
-    using AllDependencies = detail::Concat<typename detail::Split<Dependencies>::all...>;  // also Optional<All<I>>
-    using MisnestedDependencies = detail::Concat<typename detail::Split<Dependencies>::misnested...>;
-    using DeclaredDependencies = detail::Concat<RequiredDependencies, OptionalDependencies, AfterDependencies,
-                                                AllDependencies, MisnestedDependencies>;
-    using ListedProvides = detail::Concat<typename detail::Split<Dependencies>::listedProvides...>;
-    using ListedAlternatives = detail::Concat<typename detail::Split<Dependencies>::listedAlternatives...>;
     using Entries = detail::TypeList<Dependencies...>;  // as written
+    using RequiredDependencies = detail::TargetsOf<Entries, detail::Use::required>;
+    using OptionalDependencies = detail::TargetsOf<Entries, detail::Use::optional>;
+    using AfterDependencies = detail::TargetsOf<Entries, detail::Use::ordering>;
+    using AllDependencies = detail::TargetsOf<Entries, detail::Use::all, detail::Use::optionalAll>;
+    using MisnestedDependencies = detail::TargetsOf<Entries, detail::Use::misnested>;
+    using DeclaredDependencies = detail::TargetsOf<Entries, detail::Use::required, detail::Use::optional,
+                                                   detail::Use::ordering, detail::Use::all, detail::Use::optionalAll,
+                                                   detail::Use::misnested>;
+    using ListedProvides = detail::TargetsOf<Entries, detail::Use::listedProvides>;
+    using ListedAlternatives = detail::TargetsOf<Entries, detail::Use::listedAlternative>;
 
     // T, Optional<T>, After<T>, All<T> and Optional<All<T>> all name T: two of them are a duplicate.
     static constexpr bool uniqueDependencies = detail::UniqueList<DeclaredDependencies>::value;
     static constexpr bool uniqueListedProvides = detail::UniqueList<ListedProvides>::value;
     static constexpr bool uniqueListedAlternatives = detail::UniqueList<ListedAlternatives>::value;
-    using ListedAsync = detail::Concat<typename detail::Split<Dependencies>::listedAsync...>;
+    using ListedAsync = detail::TargetsOf<Entries, detail::Use::listedAsync>;
     static constexpr bool uniqueListedAsync = detail::UniqueList<ListedAsync>::value;
     static constexpr bool uniqueEntries =
         uniqueDependencies && uniqueListedProvides && uniqueListedAlternatives && uniqueListedAsync;

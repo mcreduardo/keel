@@ -26,96 +26,50 @@ enum class Use {
     misnested
 };
 
-struct EmptySplit {
-    using required = TypeList<>;
-    using optional = TypeList<>;
-    using after = TypeList<>;
-    using all = TypeList<>;
-    using misnested = TypeList<>;
-    using listedProvides = TypeList<>;
-    using listedAlternatives = TypeList<>;
-    using listedAsync = TypeList<>;
-};
-
-// Separates the entries of a keel::Component<...> list by kind. `target` is the type the entry names.
-template <class D>
-struct Split : EmptySplit {
-    using required = TypeList<D>;
+// What an entry of a keel::Component<...> list names (`target`), and how (`use`).
+template <class D, Use U = Use::required>
+struct Split {
     using target = D;
-    static constexpr Use use = Use::required;
+    static constexpr Use use = U;
 };
 template <class T>
-struct Split<Optional<T>> : EmptySplit {
-    using optional = TypeList<T>;
-    using target = T;
-    static constexpr Use use = Use::optional;
-};
+struct Split<Optional<T>> : Split<T, Use::optional> {};
 template <class T>
-struct Split<After<T>> : EmptySplit {
-    using after = TypeList<T>;
-    using target = T;
-    static constexpr Use use = Use::ordering;
-};
+struct Split<After<T>> : Split<T, Use::ordering> {};
 template <class I>
-struct Split<Provides<I>> : EmptySplit {
-    using listedProvides = TypeList<I>;
-    using target = I;
-    static constexpr Use use = Use::listedProvides;
-};
+struct Split<Provides<I>> : Split<I, Use::listedProvides> {};
 template <class I>
-struct Split<Alternative<I>> : EmptySplit {
-    using listedAlternatives = TypeList<I>;
-    using target = I;
-    static constexpr Use use = Use::listedAlternative;
-};
+struct Split<Alternative<I>> : Split<I, Use::listedAlternative> {};
 template <class I>
-struct Split<All<I>> : EmptySplit {
-    using all = TypeList<I>;
-    using target = I;
-    static constexpr Use use = Use::all;
-};
+struct Split<All<I>> : Split<I, Use::all> {};
 template <class I>
-struct Split<Optional<All<I>>> : EmptySplit {
-    using all = TypeList<I>;
-    using target = I;
-    static constexpr Use use = Use::optionalAll;
-};
+struct Split<Optional<All<I>>> : Split<I, Use::optionalAll> {};
 // Accessors accept I for it, so MisnestedAll is the one error.
 template <class I>
-struct Split<All<Optional<I>>> : EmptySplit {
-    using misnested = TypeList<I>;
-    using target = I;
-    static constexpr Use use = Use::misnested;
-};
+struct Split<All<Optional<I>>> : Split<I, Use::misnested> {};
+template <>
+struct Split<AsyncInit> : Split<AsyncInit, Use::listedAsync> {};
+template <>
+struct Split<AsyncStart> : Split<AsyncStart, Use::listedAsync> {};
 
-template <>
-struct Split<AsyncInit> : EmptySplit {
-    using listedAsync = TypeList<AsyncInit>;
-    using target = AsyncInit;
-    static constexpr Use use = Use::listedAsync;
+template <class Entry, Use... uses>
+inline constexpr bool usedAs = ((Split<Entry>::use == uses) || ...);
+// The targets of the entries whose use is one of uses, in list order.
+template <class Entries, Use... uses>
+struct TargetsOfImpl;
+template <class... Entries, Use... uses>
+struct TargetsOfImpl<TypeList<Entries...>, uses...> {
+    using type = Concat<
+        std::conditional_t<usedAs<Entries, uses...>, TypeList<typename Split<Entries>::target>, TypeList<>>...>;
 };
-template <>
-struct Split<AsyncStart> : EmptySplit {
-    using listedAsync = TypeList<AsyncStart>;
-    using target = AsyncStart;
-    static constexpr Use use = Use::listedAsync;
-};
+template <class Entries, Use... uses>
+using TargetsOf = typename TargetsOfImpl<Entries, uses...>::type;
 
 template <class T>
 inline constexpr bool isAsyncMarker = std::is_same_v<T, AsyncInit> || std::is_same_v<T, AsyncStart>;
 
 template <class T>
-inline constexpr bool isDependencyMarker = isAsyncMarker<T>;
-template <class T>
-inline constexpr bool isDependencyMarker<Optional<T>> = true;
-template <class T>
-inline constexpr bool isDependencyMarker<After<T>> = true;
-template <class T>
-inline constexpr bool isDependencyMarker<Provides<T>> = true;
-template <class T>
-inline constexpr bool isDependencyMarker<Alternative<T>> = true;
-template <class T>
-inline constexpr bool isDependencyMarker<All<T>> = true;
+inline constexpr bool isDependencyMarker = Split<T>::use != Use::required;
 
 // A type an entry may name: a class, not cv-qualified, not a marker. Anything else would never match.
 template <class T>
@@ -158,8 +112,7 @@ struct ExpandImpl {
 };
 template <class... Cs>
 struct ExpandImpl<true, Cs...> {
-    using type = Expanded<typename Expand<TypeList<>, TypeList<>, TypeList<>, Cs...>::components,
-                          typename Expand<TypeList<>, TypeList<>, TypeList<>, Cs...>::repeated>;
+    using type = typename Expand<TypeList<>, TypeList<>, TypeList<>, Cs...>::Expanded;  // the base class
 };
 template <class... Cs>
 using ExpandBundles = typename ExpandImpl<(isBundle<Cs> || ...), Cs...>::type;

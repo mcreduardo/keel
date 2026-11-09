@@ -234,7 +234,7 @@ private:
     }
     template <class Visit, class... Entries>
     static void referredIn(Visit& visit, std::vector<TypeId>& seen, TypeList<Entries...>) {
-        (referredAt<typename Split<Entries>::target, isReferral<Entries>>(visit, seen), ...);
+        (referredAt<typename Split<Entries>::target, isDependencyEntry<Entries>>(visit, seen), ...);
     }
     // One instantiation per type, not per entry (T, Optional<T>, ... name the same T).
     template <class T, bool referral, class Visit>
