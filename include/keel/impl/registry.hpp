@@ -35,26 +35,20 @@ public:
     void add(C& component) {
         ComponentBase& base = component;
         base.registry_ = this;
-        base.needs_ = Needs<C>::table.data();
-        base.needCount_ = Needs<C>::table.size();
+        base.needs_ = Needs<C>::table;
         base.name_ = typeName<C>();
         if constexpr (isConditional<C>) base.conditional_ = &component;
         base.asyncInit_ = hasAsyncInit<C>;
         base.asyncStart_ = hasAsyncStart<C>;
         components_.push_back(&base);
-        dependencies_.emplace_back();
     }
 
-    // Only types some entry refers to get bindings; App::getComponent<T>() finds a single
-    // provider in its storage.
-    bool beginBindings(TypeId id) { return bindings_.try_emplace(id).second; }  // false if bound already
+    // Only types some entry refers to get bindings; App::getComponent<T>() builds its own.
     void bind(TypeId id, Binding binding) { bindings_[id].push_back(binding); }
 
-    // Only added when some component is async.
-    void addDependency(std::size_t dependent, std::size_t dependency) {
-        dependencies_[dependent].push_back(dependency);
-    }
-    void setHasAsync() noexcept { hasAsync_ = true; }
+    // Set only when some component is async. ordered(k, m): the k-th component in init order
+    // waits for the m-th (m < k).
+    void setOrdering(bool (*ordered)(std::size_t, std::size_t)) noexcept { ordered_ = ordered; }
     void setAsync(bool async) {
         if (state_ != State::building) throw Error("keel: setAsync() must be called before init()");
         async_ = async;
@@ -74,7 +68,6 @@ public:
     }
     const Binding* resolve(std::span<const Binding> bindings, std::string_view dependency, std::string_view user,
                            bool required) const;
-    void checkEnabled(const ComponentBase& provider, std::string_view dependency) const;
 
     const std::vector<Binding>& findAll(TypeId id) const {
         static const std::vector<Binding> none;
@@ -90,14 +83,11 @@ public:
 
 private:
     // stopped vs initialized: same component states, but a stopped app can't be started again.
-    enum class State { building, initialized, started, stopped, failed, deinitialized };
+    // initializing and starting: while init() or start() runs (a lookup may come from a hook).
+    enum class State { building, initializing, initialized, starting, started, stopped, failed, deinitialized };
 
     class Schedule;
 
-    static std::string disabledProvider(std::string_view who, std::string_view provider, std::string_view dependency) {
-        return concat({who, ": ", provider == dependency ? "" : "its provider ", provider,
-                       " is disabled (its enabled() returned false)"});
-    }
     [[noreturn]] void resolveFailed(std::span<const Binding> bindings, std::string_view dependency,
                                     std::string_view user, bool alternatives, bool undecided,
                                     std::size_t enabledCount) const;
@@ -107,7 +97,7 @@ private:
     void runOne(Phase phase, std::size_t i);
     bool runsAsync(Phase phase, std::size_t i) const noexcept;
 
-    bool hasAsync_ = false;  // some component is async (known at compile time)
+    bool (*ordered_)(std::size_t, std::size_t) = nullptr;  // null: no component is async
     bool async_ = true;      // App::setAsync()
 
     void stopAll() noexcept;
@@ -117,26 +107,22 @@ private:
     // also in the noexcept stop() and deinit().
     template <class Hook>
     void timed(Phase phase, ComponentBase& c, Hook hook) {
-        struct Recorder {  // records when the call returns or throws
-            Recorder(Registry& r, Phase p, const ComponentBase& c) : registry(r), phase(p), component(c) {}
-            Recorder(const Recorder&) = delete;
-            Recorder& operator=(const Recorder&) = delete;
-            ~Recorder() { registry.record(phase, component, begin, failed); }
-            Registry& registry;
-            Phase phase;
-            const ComponentBase& component;
-            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-            bool failed = true;  // until the call returns
-        } recorder(*this, phase, c);
-        (c.*hook)();
-        recorder.failed = false;
+        const auto begin = std::chrono::steady_clock::now();
+        try {
+            (c.*hook)();
+        } catch (...) {
+            record(phase, c, begin, true);
+            throw;  // unchanged
+        }
+        record(phase, c, begin, false);
     }
     // May run on several threads at once; appends under timingsMutex_.
     void record(Phase phase, const ComponentBase& c, std::chrono::steady_clock::time_point begin,
                 bool failed) noexcept {
         const auto duration = std::chrono::steady_clock::now() - begin;
         const std::lock_guard lock(timingsMutex_);
-        // Can't be full (see timed()); checked since an allocating push_back could throw in noexcept code.
+        // Can't be full: at most 4 calls per component (init, start, stop, deinit; see timed()).
+        // Checked since an allocating push_back could throw in noexcept code.
         assert(timings_.size() < timings_.capacity());
         if (timings_.size() == timings_.capacity()) return;
         timings_.push_back(
@@ -145,7 +131,6 @@ private:
 
     // Built by the App's constructor, then only read (also by several threads at once).
     std::vector<ComponentBase*> components_;  // in init order
-    std::vector<std::vector<std::size_t>> dependencies_;  // per init position: earlier positions it waits for
     std::unordered_map<TypeId, std::vector<Binding>> bindings_;  // each in init order
 
     std::mutex timingsMutex_;
@@ -192,10 +177,7 @@ inline void* ComponentBase::useIfEnabled(const Binding& b, std::string_view depe
 
 // The dependencies are initialized or disabled by now, async too (see Registry::Schedule).
 inline void ComponentBase::checkDependencies() const {
-    for (std::size_t i = 0; i < needCount_; ++i) {
-        const Need& need = needs_[i];
-        lookup(need.id, need.name(), need.use == Use::required);
-    }
+    for (const Need& need : needs_) lookup(need.id, need.name(), need.use == Use::required);
 }
 
 inline void* ComponentBase::use(const Binding& b, std::string_view dependency) const {
@@ -243,6 +225,9 @@ inline void Registry::resolveFailed(std::span<const Binding> bindings, std::stri
     if (alternatives && state_ == State::building) {
         throw Error(concat({who, ": init() chooses among its alternatives (", names(false), "); call it after init()"}));
     }
+    if (alternatives && undecided && state_ == State::initializing) {
+        throw Error(concat({who, ": init() hasn't chosen among its alternatives yet (", names(false), ")"}));
+    }
     if (alternatives && undecided) {
         throw Error(concat({who, ": init() failed before choosing among its alternatives (", names(false), ")"}));
     }
@@ -251,12 +236,9 @@ inline void Registry::resolveFailed(std::span<const Binding> bindings, std::stri
     }
     if (bindings.empty()) throw Error(concat({who, ", which is not part of the application"}));
     if (alternatives) throw Error(concat({who, ": none of its alternatives (", names(false), ") is enabled"}));
-    throw Error(disabledProvider(who, bindings.front().owner->name_, dependency));
-}
-
-inline void Registry::checkEnabled(const ComponentBase& provider, std::string_view dependency) const {
-    if (provider.state_ != ComponentBase::State::disabled) return;
-    throw Error(disabledProvider(concat({"keel: getComponent<", dependency, ">()"}), provider.name_, dependency));
+    const std::string_view provider = bindings.front().owner->name_;
+    throw Error(concat({who, ": ", provider == dependency ? "" : "its provider ", provider,
+                        " is disabled (its enabled() returned false)"}));
 }
 
 }  // namespace detail

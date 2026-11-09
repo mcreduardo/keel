@@ -5,6 +5,16 @@ All notable changes to keel are listed here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html); before 1.0, a new minor version
 may change the API.
 
+## Unreleased
+
+### Fixed
+
+- A root `getComponent<I>()` of an alternative, or `start()`, called while `init()` is still
+  running (from a component's hook) no longer reports a failed `init()`: the messages are
+  `init() hasn't chosen among its alternatives yet (...)` and `start() called before init() returned`.
+  `start()` called while `start()` runs reports `start() called while start() runs` instead
+  of a failed `init()` or `start()`.
+
 ## 0.1.0 – 2026-11-09
 
 First release: a single C++20 header, standard library only, no RTTI.

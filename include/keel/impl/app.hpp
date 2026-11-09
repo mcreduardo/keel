@@ -81,10 +81,7 @@ public:
     explicit AppImpl(Args&&... args) : storage_(args...) {
         addAll(typename Info::Sorted{});  // in dependency order
         forEachReferred([&]<class T>() { bindProviders<T>(std::make_index_sequence<Info::template providerCount<T>>{}); });
-        if constexpr (anyAsync(typename Info::Sorted{})) {
-            registry_.setHasAsync();
-            addDependencies();
-        }
+        if constexpr (anyAsync(typename Info::Sorted{})) registry_.setOrdering(&ordered);
     }
 
     // Without the deleted move, the constructor template would be picked for a move.
@@ -125,15 +122,11 @@ public:
                                                           typename Info::template Mixed<T>,
                                                           AmbiguousInterface<T, Providers>>>>>>;
         static_assert(sizeof(Diagnosis) > 0);
-        if constexpr (chosenAtRuntime && implements<Provider, T>()) {  // else an error above
+        if constexpr ((providers == 1 || chosenAtRuntime) && implements<Provider, T>()) {  // else an error above
             // Built here (T may have no bindings), on the stack so the lookup doesn't allocate.
-            const auto bindings = alternativeBindings<T>(std::make_index_sequence<providers>{});
+            // One provider resolves before init() too, even a keel::Conditional: the root may configure it.
+            const auto bindings = bindingsOf<T>(std::make_index_sequence<providers>{});
             return *static_cast<T*>(registry_.resolve(bindings, typeName<T>(), {}, true)->object);
-        } else if constexpr (providers == 1 && implements<Provider, T>()) {
-            // Before init() too, even for a keel::Conditional: the root may configure it.
-            Provider& provider = storage_.template get<Provider>();
-            registry_.checkEnabled(provider, typeName<T>());
-            return provider;
         } else {
             throw Error("keel: unreachable");
         }
@@ -256,7 +249,7 @@ private:
     }
 
     template <class T, std::size_t... Js>
-    std::array<Binding, sizeof...(Js)> alternativeBindings(std::index_sequence<Js...>) {
+    std::array<Binding, sizeof...(Js)> bindingsOf(std::index_sequence<Js...>) {
         return {bindingOf<T, typename Info::template At<Info::template providersInOrder<T>[Js]>>()...};
     }
     template <class T, class C>
@@ -270,7 +263,6 @@ private:
     // A provider that can't be used as a T is a compile error, and not bound.
     template <class T, std::size_t... Js>
     void bindProviders(std::index_sequence<Js...>) {
-        registry_.beginBindings(typeId<T>());
         (bindProvider<T, typename Info::template At<Info::template providersInOrder<T>[Js]>>(), ...);
     }
     template <class T, class C>
@@ -285,12 +277,8 @@ private:
         return ((hasAsyncInit<Sorted> || hasAsyncStart<Sorted>) || ...);
     }
     // The ordering edges by init position: what the async scheduler waits for.
-    void addDependencies() {
-        for (std::size_t k = 0; k < Info::size; ++k) {
-            for (std::size_t m = 0; m < k; ++m) {
-                if (Info::graph[Info::order.index[k]][Info::order.index[m]]) registry_.addDependency(k, m);
-            }
-        }
+    static bool ordered(std::size_t k, std::size_t m) noexcept {
+        return Info::graph[Info::order.index[k]][Info::order.index[m]];
     }
 
     template <class... Sorted>

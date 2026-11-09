@@ -10,7 +10,7 @@
 #include "diagnostics.hpp"
 
 #include <atomic>
-#include <cstddef>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -76,8 +76,7 @@ private:
     void checkDependencies() const;
 
     Registry* registry_ = nullptr;
-    const Need* needs_ = nullptr;  // the entries of the keel::Component<...> list that init() checks
-    std::size_t needCount_ = 0;
+    std::span<const Need> needs_;  // the entries of the keel::Component<...> list that init() checks
     std::string_view name_;
     const Conditional* conditional_ = nullptr;  // the component, if it is a keel::Conditional
     bool asyncInit_ = false;

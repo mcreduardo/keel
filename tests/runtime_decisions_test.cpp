@@ -2,6 +2,7 @@
 
 #include "check.hpp"
 
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -529,6 +530,40 @@ TEST(the_root_gets_no_alternative_after_a_failed_init) {
         CHECK(errorOf([&] { app.getComponent<Cache>(); }) ==
               undecided + "decisions::RedisCache, decisions::MemoryCache)");
     }
+}
+
+namespace decisions {
+
+// Runs probe from its own init() and start(), before Cache is chosen (nothing orders it after Cache).
+std::function<void()> probe;
+class Early : public keel::Component<> {
+    void init() override { probe(); }
+    void start() override { probe(); }
+};
+
+}  // namespace decisions
+
+TEST(the_root_reports_init_and_start_still_running) {
+    using namespace decisions;
+    settings = {};
+    settings.cache = "memory";
+    auto app = keel::compose<Early, RedisCache, MemoryCache, Config>();
+    std::vector<std::string> seen;
+    probe = [&] {
+        seen.push_back(errorOf([&] { app.getComponent<Cache>(); }));
+        seen.push_back(errorOf([&] { app.start(); }));
+    };
+    app.init();
+    CHECK(&app.getComponent<Cache>() == static_cast<Cache*>(&app.getComponent<MemoryCache>()));
+    app.start();
+    probe = nullptr;
+    CHECK((seen == std::vector<std::string>{
+                       "keel: getComponent<decisions::Cache>(): init() hasn't chosen among its alternatives yet "
+                       "(decisions::RedisCache, decisions::MemoryCache)",
+                       "keel: start() called before init() returned",
+                       "no error",  // chosen by now
+                       "keel: start() called while start() runs",
+                   }));
 }
 
 TEST(run_calls_the_enabled_alternative) {

@@ -455,8 +455,9 @@ thrown for:
 | a lookup of a dependency that isn't initialized (yet, or any more) | `keel: Server used Logger before it was initialized` / `... after it was deinitialized` |
 | the root asks for an alternative after an `init()` that failed before choosing | `keel: getComponent<Cache>(): init() failed before choosing among its alternatives (RedisCache, MemoryCache)` |
 | the root asks for an alternative before `init()` | `keel: getComponent<Cache>(): init() chooses among its alternatives (RedisCache, MemoryCache); call it after init()` |
+| the root asks for an alternative while `init()` runs, before it has chosen | `keel: getComponent<Cache>(): init() hasn't chosen among its alternatives yet (RedisCache, MemoryCache)` |
 | `init()` twice, or `run()` after `init()` | `keel: init() can be called only once per App` |
-| `start()` before `init()`, twice, after `stop()`, after a failed startup, after `deinit()` | `keel: start() called before init()`, ... |
+| `start()` before `init()` (or while it runs), while `start()` runs, twice, after `stop()`, after a failed startup, after `deinit()` | `keel: start() called before init()`, ... |
 | `setAsync()` after `init()` | `keel: setAsync() must be called before init()` |
 
 The alternatives' failures (none or several enabled) are the only dependency problems

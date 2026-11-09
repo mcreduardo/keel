@@ -502,8 +502,7 @@ private:
     void checkDependencies() const;
 
     Registry* registry_ = nullptr;
-    const Need* needs_ = nullptr;  // the entries of the keel::Component<...> list that init() checks
-    std::size_t needCount_ = 0;
+    std::span<const Need> needs_;  // the entries of the keel::Component<...> list that init() checks
     std::string_view name_;
     const Conditional* conditional_ = nullptr;  // the component, if it is a keel::Conditional
     bool asyncInit_ = false;
@@ -1676,26 +1675,20 @@ public:
     void add(C& component) {
         ComponentBase& base = component;
         base.registry_ = this;
-        base.needs_ = Needs<C>::table.data();
-        base.needCount_ = Needs<C>::table.size();
+        base.needs_ = Needs<C>::table;
         base.name_ = typeName<C>();
         if constexpr (isConditional<C>) base.conditional_ = &component;
         base.asyncInit_ = hasAsyncInit<C>;
         base.asyncStart_ = hasAsyncStart<C>;
         components_.push_back(&base);
-        dependencies_.emplace_back();
     }
 
-    // Only types some entry refers to get bindings; App::getComponent<T>() finds a single
-    // provider in its storage.
-    bool beginBindings(TypeId id) { return bindings_.try_emplace(id).second; }  // false if bound already
+    // Only types some entry refers to get bindings; App::getComponent<T>() builds its own.
     void bind(TypeId id, Binding binding) { bindings_[id].push_back(binding); }
 
-    // Only added when some component is async.
-    void addDependency(std::size_t dependent, std::size_t dependency) {
-        dependencies_[dependent].push_back(dependency);
-    }
-    void setHasAsync() noexcept { hasAsync_ = true; }
+    // Set only when some component is async. ordered(k, m): the k-th component in init order
+    // waits for the m-th (m < k).
+    void setOrdering(bool (*ordered)(std::size_t, std::size_t)) noexcept { ordered_ = ordered; }
     void setAsync(bool async) {
         if (state_ != State::building) throw Error("keel: setAsync() must be called before init()");
         async_ = async;
@@ -1715,7 +1708,6 @@ public:
     }
     const Binding* resolve(std::span<const Binding> bindings, std::string_view dependency, std::string_view user,
                            bool required) const;
-    void checkEnabled(const ComponentBase& provider, std::string_view dependency) const;
 
     const std::vector<Binding>& findAll(TypeId id) const {
         static const std::vector<Binding> none;
@@ -1731,14 +1723,11 @@ public:
 
 private:
     // stopped vs initialized: same component states, but a stopped app can't be started again.
-    enum class State { building, initialized, started, stopped, failed, deinitialized };
+    // initializing and starting: while init() or start() runs (a lookup may come from a hook).
+    enum class State { building, initializing, initialized, starting, started, stopped, failed, deinitialized };
 
     class Schedule;
 
-    static std::string disabledProvider(std::string_view who, std::string_view provider, std::string_view dependency) {
-        return concat({who, ": ", provider == dependency ? "" : "its provider ", provider,
-                       " is disabled (its enabled() returned false)"});
-    }
     [[noreturn]] void resolveFailed(std::span<const Binding> bindings, std::string_view dependency,
                                     std::string_view user, bool alternatives, bool undecided,
                                     std::size_t enabledCount) const;
@@ -1748,7 +1737,7 @@ private:
     void runOne(Phase phase, std::size_t i);
     bool runsAsync(Phase phase, std::size_t i) const noexcept;
 
-    bool hasAsync_ = false;  // some component is async (known at compile time)
+    bool (*ordered_)(std::size_t, std::size_t) = nullptr;  // null: no component is async
     bool async_ = true;      // App::setAsync()
 
     void stopAll() noexcept;
@@ -1758,26 +1747,22 @@ private:
     // also in the noexcept stop() and deinit().
     template <class Hook>
     void timed(Phase phase, ComponentBase& c, Hook hook) {
-        struct Recorder {  // records when the call returns or throws
-            Recorder(Registry& r, Phase p, const ComponentBase& c) : registry(r), phase(p), component(c) {}
-            Recorder(const Recorder&) = delete;
-            Recorder& operator=(const Recorder&) = delete;
-            ~Recorder() { registry.record(phase, component, begin, failed); }
-            Registry& registry;
-            Phase phase;
-            const ComponentBase& component;
-            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-            bool failed = true;  // until the call returns
-        } recorder(*this, phase, c);
-        (c.*hook)();
-        recorder.failed = false;
+        const auto begin = std::chrono::steady_clock::now();
+        try {
+            (c.*hook)();
+        } catch (...) {
+            record(phase, c, begin, true);
+            throw;  // unchanged
+        }
+        record(phase, c, begin, false);
     }
     // May run on several threads at once; appends under timingsMutex_.
     void record(Phase phase, const ComponentBase& c, std::chrono::steady_clock::time_point begin,
                 bool failed) noexcept {
         const auto duration = std::chrono::steady_clock::now() - begin;
         const std::lock_guard lock(timingsMutex_);
-        // Can't be full (see timed()); checked since an allocating push_back could throw in noexcept code.
+        // Can't be full: at most 4 calls per component (init, start, stop, deinit; see timed()).
+        // Checked since an allocating push_back could throw in noexcept code.
         assert(timings_.size() < timings_.capacity());
         if (timings_.size() == timings_.capacity()) return;
         timings_.push_back(
@@ -1786,7 +1771,6 @@ private:
 
     // Built by the App's constructor, then only read (also by several threads at once).
     std::vector<ComponentBase*> components_;  // in init order
-    std::vector<std::vector<std::size_t>> dependencies_;  // per init position: earlier positions it waits for
     std::unordered_map<TypeId, std::vector<Binding>> bindings_;  // each in init order
 
     std::mutex timingsMutex_;
@@ -1833,10 +1817,7 @@ inline void* ComponentBase::useIfEnabled(const Binding& b, std::string_view depe
 
 // The dependencies are initialized or disabled by now, async too (see Registry::Schedule).
 inline void ComponentBase::checkDependencies() const {
-    for (std::size_t i = 0; i < needCount_; ++i) {
-        const Need& need = needs_[i];
-        lookup(need.id, need.name(), need.use == Use::required);
-    }
+    for (const Need& need : needs_) lookup(need.id, need.name(), need.use == Use::required);
 }
 
 inline void* ComponentBase::use(const Binding& b, std::string_view dependency) const {
@@ -1884,6 +1865,9 @@ inline void Registry::resolveFailed(std::span<const Binding> bindings, std::stri
     if (alternatives && state_ == State::building) {
         throw Error(concat({who, ": init() chooses among its alternatives (", names(false), "); call it after init()"}));
     }
+    if (alternatives && undecided && state_ == State::initializing) {
+        throw Error(concat({who, ": init() hasn't chosen among its alternatives yet (", names(false), ")"}));
+    }
     if (alternatives && undecided) {
         throw Error(concat({who, ": init() failed before choosing among its alternatives (", names(false), ")"}));
     }
@@ -1892,12 +1876,9 @@ inline void Registry::resolveFailed(std::span<const Binding> bindings, std::stri
     }
     if (bindings.empty()) throw Error(concat({who, ", which is not part of the application"}));
     if (alternatives) throw Error(concat({who, ": none of its alternatives (", names(false), ") is enabled"}));
-    throw Error(disabledProvider(who, bindings.front().owner->name_, dependency));
-}
-
-inline void Registry::checkEnabled(const ComponentBase& provider, std::string_view dependency) const {
-    if (provider.state_ != ComponentBase::State::disabled) return;
-    throw Error(disabledProvider(concat({"keel: getComponent<", dependency, ">()"}), provider.name_, dependency));
+    const std::string_view provider = bindings.front().owner->name_;
+    throw Error(concat({who, ": ", provider == dependency ? "" : "its provider ", provider,
+                        " is disabled (its enabled() returned false)"}));
 }
 
 template <class C, class... Args>
@@ -1967,7 +1948,7 @@ inline void Registry::deinitAll() noexcept {
 
 // Runs one phase when some component is async (see docs/async.md): one thread per async step,
 // the calling thread runs the rest, preferring ready steps an async step waits for.
-// status_, errors_ and failed_ only under mutex_ (run() reads errors_ after joining). A step is
+// status_, error_ and failed_ only under mutex_ (run() reads error_ after joining). A step is
 // marked done under mutex_ and starts only after reading its dependencies done under mutex_,
 // so a dependency's hook happens-before its dependents'. No deadlock: the graph is acyclic.
 class Registry::Schedule {
@@ -1978,24 +1959,28 @@ public:
           size_(registry.components_.size()),
           async_(size_, 0),
           feedsAsync_(size_, 0),
-          status_(size_, Status::pending),
-          errors_(size_) {
+          dependencies_(size_),
+          status_(size_, Status::pending) {
         std::size_t asyncCount = 0;
         for (std::size_t i = 0; i < size_; ++i) {
             async_[i] = registry_.runsAsync(phase_, i) ? 1 : 0;
             asyncCount += async_[i];
+            for (std::size_t j = 0; j < i; ++j) {
+                if (registry_.ordered_(i, j)) dependencies_[i].push_back(j);
+            }
         }
         for (std::size_t i = size_; i-- > 0;) {
             if (async_[i] == 0 && feedsAsync_[i] == 0) continue;
-            for (std::size_t j : registry_.dependencies_[i]) feedsAsync_[j] = 1;
+            for (std::size_t j : dependencies_[i]) feedsAsync_[j] = 1;
         }
         threads_.reserve(asyncCount);
     }
     Schedule(const Schedule&) = delete;
     Schedule& operator=(const Schedule&) = delete;
 
-    // If run() was left early by its own exception (std::mutex::lock can throw), tells the
-    // waiting threads to give up and joins them, so none outlives the phase.
+    // If run() was left early by its own exception (std::mutex::lock can throw), failed_ tells
+    // the waiting threads to give up, then they are joined, so none outlives the phase. After
+    // run() returns, every thread has been joined already and setting failed_ changes nothing.
     ~Schedule() {
         {
             const std::lock_guard lock(mutex_);
@@ -2020,9 +2005,7 @@ public:
         }
         runLocal();
         joinAll();
-        for (const std::exception_ptr& error : errors_) {  // in init order
-            if (error) std::rethrow_exception(error);
-        }
+        if (error_) std::rethrow_exception(error_);
     }
 
 private:
@@ -2070,8 +2053,11 @@ private:
     void finish(std::size_t i, std::exception_ptr error) {
         {
             const std::lock_guard lock(mutex_);
-            if (error) {
-                errors_[i] = std::move(error);  // the status stays `running`
+            if (error) {  // the status stays `running`
+                if (i < errorAt_) {  // the first in init order is rethrown
+                    error_ = std::move(error);
+                    errorAt_ = i;
+                }
                 failed_ = true;
             } else {
                 status_[i] = Status::done;
@@ -2081,7 +2067,7 @@ private:
     }
 
     bool ready(std::size_t i) const {
-        for (std::size_t j : registry_.dependencies_[i]) {
+        for (std::size_t j : dependencies_[i]) {
             if (status_[j] != Status::done) return false;
         }
         return true;
@@ -2108,12 +2094,14 @@ private:
     const std::size_t size_;
     std::vector<unsigned char> async_;       // constant after construction
     std::vector<unsigned char> feedsAsync_;  // constant after construction
+    std::vector<std::vector<std::size_t>> dependencies_;  // constant: per position, earlier ones it waits for
     std::vector<std::thread> threads_;       // used by the calling thread only
 
     std::mutex mutex_;
     std::condition_variable changed_;  // notified after each step finishes
     std::vector<Status> status_;
-    std::vector<std::exception_ptr> errors_;
+    std::exception_ptr error_;
+    std::size_t errorAt_ = size_;
     bool failed_ = false;
 };
 
@@ -2143,7 +2131,7 @@ inline void Registry::runOne(Phase phase, std::size_t i) {
 
 inline void Registry::runPhase(Phase phase) {
     bool anyAsync = false;
-    if (hasAsync_ && async_) {
+    if (ordered_ != nullptr && async_) {
         for (std::size_t i = 0; i < components_.size(); ++i) anyAsync = anyAsync || runsAsync(phase, i);
     }
     if (!anyAsync) {  // everything on the calling thread, in init order
@@ -2157,10 +2145,11 @@ inline void Registry::runPhase(Phase phase) {
 inline void Registry::init() {
     if (state_ != State::building) throw Error("keel: init() can be called only once per App");
     timings_.reserve(4 * components_.size());  // see timed()
-    state_ = State::failed;  // until proven otherwise
+    state_ = State::initializing;
     try {
         runPhase(Phase::init);
     } catch (...) {
+        state_ = State::failed;
         deinitAll();  // roll back what was initialized, then report the init() failure
         throw;
     }
@@ -2173,6 +2162,10 @@ inline void Registry::start() {
             break;
         case State::building:
             throw Error("keel: start() called before init()");
+        case State::initializing:
+            throw Error("keel: start() called before init() returned");
+        case State::starting:
+            throw Error("keel: start() called while start() runs");
         case State::started:
         case State::stopped:
             throw Error("keel: start() can be called only once per App (no restart after stop())");
@@ -2181,10 +2174,11 @@ inline void Registry::start() {
         case State::deinitialized:
             throw Error("keel: start() called after deinit()");
     }
-    state_ = State::failed;  // until proven otherwise
+    state_ = State::starting;
     try {
         runPhase(Phase::start);
     } catch (...) {
+        state_ = State::failed;
         stopAll();  // roll back what was started, then everything initialized
         deinitAll();
         throw;
@@ -2260,10 +2254,7 @@ public:
     explicit AppImpl(Args&&... args) : storage_(args...) {
         addAll(typename Info::Sorted{});  // in dependency order
         forEachReferred([&]<class T>() { bindProviders<T>(std::make_index_sequence<Info::template providerCount<T>>{}); });
-        if constexpr (anyAsync(typename Info::Sorted{})) {
-            registry_.setHasAsync();
-            addDependencies();
-        }
+        if constexpr (anyAsync(typename Info::Sorted{})) registry_.setOrdering(&ordered);
     }
 
     // Without the deleted move, the constructor template would be picked for a move.
@@ -2304,15 +2295,11 @@ public:
                                                           typename Info::template Mixed<T>,
                                                           AmbiguousInterface<T, Providers>>>>>>;
         static_assert(sizeof(Diagnosis) > 0);
-        if constexpr (chosenAtRuntime && implements<Provider, T>()) {  // else an error above
+        if constexpr ((providers == 1 || chosenAtRuntime) && implements<Provider, T>()) {  // else an error above
             // Built here (T may have no bindings), on the stack so the lookup doesn't allocate.
-            const auto bindings = alternativeBindings<T>(std::make_index_sequence<providers>{});
+            // One provider resolves before init() too, even a keel::Conditional: the root may configure it.
+            const auto bindings = bindingsOf<T>(std::make_index_sequence<providers>{});
             return *static_cast<T*>(registry_.resolve(bindings, typeName<T>(), {}, true)->object);
-        } else if constexpr (providers == 1 && implements<Provider, T>()) {
-            // Before init() too, even for a keel::Conditional: the root may configure it.
-            Provider& provider = storage_.template get<Provider>();
-            registry_.checkEnabled(provider, typeName<T>());
-            return provider;
         } else {
             throw Error("keel: unreachable");
         }
@@ -2435,7 +2422,7 @@ private:
     }
 
     template <class T, std::size_t... Js>
-    std::array<Binding, sizeof...(Js)> alternativeBindings(std::index_sequence<Js...>) {
+    std::array<Binding, sizeof...(Js)> bindingsOf(std::index_sequence<Js...>) {
         return {bindingOf<T, typename Info::template At<Info::template providersInOrder<T>[Js]>>()...};
     }
     template <class T, class C>
@@ -2449,7 +2436,6 @@ private:
     // A provider that can't be used as a T is a compile error, and not bound.
     template <class T, std::size_t... Js>
     void bindProviders(std::index_sequence<Js...>) {
-        registry_.beginBindings(typeId<T>());
         (bindProvider<T, typename Info::template At<Info::template providersInOrder<T>[Js]>>(), ...);
     }
     template <class T, class C>
@@ -2464,12 +2450,8 @@ private:
         return ((hasAsyncInit<Sorted> || hasAsyncStart<Sorted>) || ...);
     }
     // The ordering edges by init position: what the async scheduler waits for.
-    void addDependencies() {
-        for (std::size_t k = 0; k < Info::size; ++k) {
-            for (std::size_t m = 0; m < k; ++m) {
-                if (Info::graph[Info::order.index[k]][Info::order.index[m]]) registry_.addDependency(k, m);
-            }
-        }
+    static bool ordered(std::size_t k, std::size_t m) noexcept {
+        return Info::graph[Info::order.index[k]][Info::order.index[m]];
     }
 
     template <class... Sorted>
