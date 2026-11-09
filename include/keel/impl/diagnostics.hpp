@@ -1,9 +1,4 @@
-// keel/impl/diagnostics.hpp: the compile-time diagnostics: one class template per mistake,
-// named after it (MissingDependency, DependencyCycle, NotAComponent, RunNotCallable, ...),
-// and Passed<...>, the outcome of a check that passes.
-//
-// Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
-//
+// The compile-time diagnostics: one class template per mistake, and Passed<...>.
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
@@ -16,15 +11,9 @@ namespace keel {
 
 namespace detail {
 
-// Diagnostics. Each failure is a class template named after the mistake, whose template
-// arguments name the types involved: MissingDependency<Aggregator, WorkerPool>. A check
-// that passes is an empty Passed<...> instead, so a failing one is never instantiated
-// unless it is the mistake. The checks run per component (ComponentDiagnosis), which keeps
-// the compiler's "in instantiation of" notes short. One mistake, one error.
-//
-// The same outcomes serve keel::compose<...>, which derives from them (so each failure's
-// static_assert fires), and keel::isValid<...>, which only tests isPassed<> on them (which
-// never instantiates a failure). So the two can't disagree.
+// A failure is instantiated only if it is the mistake: one mistake, one error. compose<...>
+// derives from the outcomes, isValid<...> only tests isPassed<>, so the two can't disagree.
+// Each failure asserts a variable template that is false and read only when the check fails.
 template <class... Context>
 struct Passed {};
 
@@ -33,14 +22,11 @@ inline constexpr bool isPassed = false;
 template <class... Context>
 inline constexpr bool isPassed<Passed<Context...>> = true;
 
-// The outcome of a check, carried as a type without instantiating it (a function that
-// returned the failure by value would instantiate it).
+// Carried as a type: returning the failure by value would instantiate it.
 template <class Result>
 using Outcome = std::type_identity<Result>;
 
-// The duplicate checks of a component's own list; Base is its keel::Component<...>. Its
-// constructor instantiates it, and so does compose<...>; it is the same instantiation, so
-// a duplicate is one error.
+// The component's constructor and compose<...> share this instantiation: a duplicate is one error.
 template <class Base>
 struct ComponentListCheck {
     static_assert(Base::uniqueDependencies,
@@ -61,7 +47,7 @@ struct ComponentListCheck {
 };
 
 template <class Component, class Dependency>
-inline constexpr bool dependencyComposed = false;  // only read when the check fails
+inline constexpr bool dependencyComposed = false;
 template <class Component, class Dependency>
 struct MissingDependency {
     static_assert(dependencyComposed<Component, Dependency>,
@@ -70,7 +56,7 @@ struct MissingDependency {
 };
 
 template <class Component, class Interface, class Providers>
-inline constexpr bool singleProvider = false;  // only read when the check fails
+inline constexpr bool singleProvider = false;
 template <class Component, class Interface, class Providers>
 struct AmbiguousDependency {
     static_assert(singleProvider<Component, Interface, Providers>,
@@ -83,7 +69,7 @@ struct AmbiguousDependency {
 };
 
 template <class Interface, class Provides, class Alternatives>
-inline constexpr bool unmixedProviders = false;  // only read when the check fails
+inline constexpr bool unmixedProviders = false;
 template <class Interface, class Provides, class Alternatives>
 struct MixedProviders {
     static_assert(unmixedProviders<Interface, Provides, Alternatives>,
@@ -95,7 +81,7 @@ struct MixedProviders {
 };
 
 template <class Component, class Interface>
-inline constexpr bool anyProvider = false;  // only read when the check fails
+inline constexpr bool anyProvider = false;
 template <class Component, class Interface>
 struct MissingProvider {
     static_assert(anyProvider<Component, Interface>,
@@ -106,7 +92,7 @@ struct MissingProvider {
 };
 
 template <class Component, class Interface, class Providers>
-inline constexpr bool unconditionalProvider = false;  // only read when the check fails
+inline constexpr bool unconditionalProvider = false;
 template <class Component, class Interface, class Providers>
 struct OnlyConditionalProviders {
     static_assert(unconditionalProvider<Component, Interface, Providers>,
@@ -118,7 +104,7 @@ struct OnlyConditionalProviders {
 };
 
 template <class Component, class T>
-inline constexpr bool unconditionalDependency = false;  // only read when the check fails
+inline constexpr bool unconditionalDependency = false;
 template <class Component, class T>
 struct RequiredConditional {
     static_assert(unconditionalDependency<Component, T>,
@@ -129,7 +115,7 @@ struct RequiredConditional {
 };
 
 template <class Component, class Interface, class Provider>
-inline constexpr bool unconditionalInterface = false;  // only read when the check fails
+inline constexpr bool unconditionalInterface = false;
 template <class Component, class Interface, class Provider>
 struct RequiredConditionalProvider {
     static_assert(unconditionalInterface<Component, Interface, Provider>,
@@ -141,7 +127,7 @@ struct RequiredConditionalProvider {
 };
 
 template <class Component>
-inline constexpr bool conditionalAlternative = false;  // only read when the check fails
+inline constexpr bool conditionalAlternative = false;
 template <class Component>
 struct AlternativeNotConditional {
     static_assert(conditionalAlternative<Component>,
@@ -152,7 +138,7 @@ struct AlternativeNotConditional {
 };
 
 template <class Component, class Interface>
-inline constexpr bool providesOrAlternative = false;  // only read when the check fails
+inline constexpr bool providesOrAlternative = false;
 template <class Component, class Interface>
 struct ProvidesAndAlternative {
     static_assert(providesOrAlternative<Component, Interface>,
@@ -163,7 +149,7 @@ struct ProvidesAndAlternative {
 };
 
 template <class Component, class Interface>
-inline constexpr bool wellNestedAll = false;  // only read when the check fails
+inline constexpr bool wellNestedAll = false;
 template <class Component, class Interface>
 struct MisnestedAll {
     static_assert(wellNestedAll<Component, Interface>,
@@ -173,7 +159,7 @@ struct MisnestedAll {
 };
 
 template <class Component, class T, class Derived>
-inline constexpr bool providerDeclared = false;  // only read when the check fails
+inline constexpr bool providerDeclared = false;
 template <class Component, class T, class Derived>
 struct UndeclaredProvider {
     static_assert(providerDeclared<Component, T, Derived>,
@@ -184,7 +170,7 @@ struct UndeclaredProvider {
 };
 
 template <class Component, class T, class Derived>
-inline constexpr bool subclassDeclared = false;  // only read when the check fails
+inline constexpr bool subclassDeclared = false;
 template <class Component, class T, class Derived>
 struct UndeclaredSubclass {
     static_assert(subclassDeclared<Component, T, Derived>,
@@ -194,7 +180,7 @@ struct UndeclaredSubclass {
 };
 
 template <class Component, class T, class Derived>
-inline constexpr bool providerListed = false;  // only read when the check fails
+inline constexpr bool providerListed = false;
 template <class Component, class T, class Derived>
 struct LeftOutOfAll {
     static_assert(providerListed<Component, T, Derived>,
@@ -205,7 +191,7 @@ struct LeftOutOfAll {
 };
 
 template <class Component, class Interface>
-inline constexpr bool derivesFromInterface = false;  // only read when the check fails
+inline constexpr bool derivesFromInterface = false;
 template <class Component, class Interface>
 struct NotDerivedFromInterface {
     static_assert(derivesFromInterface<Component, Interface>,
@@ -215,7 +201,7 @@ struct NotDerivedFromInterface {
 };
 
 template <class Component, class Interface>
-inline constexpr bool accessibleProvides = false;  // only read when the check fails
+inline constexpr bool accessibleProvides = false;
 template <class Component, class Interface>
 struct InaccessibleProvides {
     static_assert(accessibleProvides<Component, Interface>,
@@ -227,7 +213,7 @@ struct InaccessibleProvides {
 };
 
 template <class Component, class Interface>
-inline constexpr bool accessibleAlternative = false;  // only read when the check fails
+inline constexpr bool accessibleAlternative = false;
 template <class Component, class Interface>
 struct InaccessibleAlternative {
     static_assert(accessibleAlternative<Component, Interface>,
@@ -239,7 +225,7 @@ struct InaccessibleAlternative {
 };
 
 template <class Component, class Interface>
-inline constexpr bool notListedAlternative = false;  // only read when the check fails
+inline constexpr bool notListedAlternative = false;
 template <class Component, class Interface>
 struct AlternativeAsDependency {
     static_assert(notListedAlternative<Component, Interface>,
@@ -251,7 +237,7 @@ struct AlternativeAsDependency {
 };
 
 template <class Component, class Interface>
-inline constexpr bool notListedProvides = false;  // only read when the check fails
+inline constexpr bool notListedProvides = false;
 template <class Component, class Interface>
 struct ProvidesAsDependency {
     static_assert(notListedProvides<Component, Interface>,
@@ -261,13 +247,12 @@ struct ProvidesAsDependency {
                   "keel::Provides<Interface>, public Interface");
 };
 
-// Every provider of one interface that derives from keel::Provides<Interface> but can't be
-// used as one: each failure is an error (one per mistaken provider).
+// One error per mistaken provider of one interface.
 template <class... Failures>
 struct ProviderFailures : Failures... {};
 
 template <class Component, class Entry>
-inline constexpr bool validEntry = false;  // only read when the check fails
+inline constexpr bool validEntry = false;
 template <class Component, class Entry>
 struct InvalidDependency {
     static_assert(validEntry<Component, Entry>,
@@ -278,7 +263,7 @@ struct InvalidDependency {
 };
 
 template <class Component, class Entry>
-inline constexpr bool asyncMarkerOnItsOwn = false;  // only read when the check fails
+inline constexpr bool asyncMarkerOnItsOwn = false;
 template <class Component, class Entry>
 struct MisplacedAsync {
     static_assert(asyncMarkerOnItsOwn<Component, Entry>,
@@ -288,7 +273,7 @@ struct MisplacedAsync {
 };
 
 template <class Component, class Marker>
-inline constexpr bool asyncNotListed = false;  // only read when the check fails
+inline constexpr bool asyncNotListed = false;
 template <class Component, class Marker>
 struct AsyncAsDependency {
     static_assert(asyncNotListed<Component, Marker>,
@@ -299,7 +284,7 @@ struct AsyncAsDependency {
 };
 
 template <class Component, class Bundle>
-inline constexpr bool notABundle = false;  // only read when the check fails
+inline constexpr bool notABundle = false;
 template <class Component, class Bundle>
 struct BundleAsDependency {
     static_assert(notABundle<Component, Bundle>,
@@ -309,7 +294,7 @@ struct BundleAsDependency {
 };
 
 template <class Bundle>
-inline constexpr bool bundleOnce = false;  // only read when the check fails
+inline constexpr bool bundleOnce = false;
 template <class Bundle>
 struct DuplicateBundle {
     static_assert(bundleOnce<Bundle>,
@@ -324,9 +309,8 @@ struct DependencyCycle {
     static_assert(acyclic<Cycle>, "keel: dependency cycle among the components in DependencyCycle<TypeList<...>>");
 };
 
-// Checks of the compose<...> list itself, each naming the offending type.
 template <class T>
-inline constexpr bool isComponentType = false;  // only read when the check fails
+inline constexpr bool isComponentType = false;
 template <class T>
 struct NotAComponent {
     static_assert(isComponentType<T>,
@@ -363,7 +347,7 @@ struct InaccessibleConditional {
                   "once.");
 };
 
-// The pack is always empty; it only makes the assertion depend on a template argument.
+// The empty pack only makes the assertion depend on a template argument.
 template <class... None>
 struct EmptyComposition {
     static_assert(sizeof...(None) > 0, "keel: compose<...> needs at least one component");
@@ -379,9 +363,8 @@ struct InaccessibleAsync {
                   "public keel::Component<...>, public keel::AsyncInit");
 };
 
-// What run(fn) returns after a mistake in fn: it converts to anything and supports the
-// usual operators, so that in conversion contexts such as `return app.run(...);` the
-// mistake is the only error. Never defined: such code never compiles.
+// Converts to anything and supports the usual operators, so the mistake in fn is the only
+// error, e.g. in `return app.run(...);`. Never defined.
 struct RunMistake {
     template <class T>
     operator T() const;
@@ -405,7 +388,6 @@ struct RunMistake {
 #undef KEEL_RUN_MISTAKE_OPERATOR
 };
 
-// Diagnostics of App::getComponent<T>().
 template <class T>
 struct NotInApp {
     static_assert(alwaysFalse<T>,
@@ -421,7 +403,6 @@ struct AmbiguousInterface {
                   "or make each of them a keel::Alternative<I> and a keel::Conditional");
 };
 
-// Diagnostics of run(fn), each named after the mistake.
 template <class C, class MemberFunction>
 struct RunTargetNotComposed : RunMistake {
     static_assert(alwaysFalse<C>,
@@ -438,8 +419,7 @@ struct RunTargetAmbiguous : RunMistake {
                   "RunTargetAmbiguous<I, TypeList<Providers...>> provides it: call it from a lambda on the one "
                   "you want, or make each of them a keel::Alternative<I> and a keel::Conditional");
 };
-// A mistake of the composition that run(&C::f) runs into (MixedProviders, or providers of
-// C that can't be used as one: see above); as a base, it is reported once with the others.
+// As a base, the composition mistake run(&C::f) runs into is reported once with the others.
 template <class Mistake>
 struct RunTargetMistake : RunMistake, Mistake {};
 template <class C, class Provider>

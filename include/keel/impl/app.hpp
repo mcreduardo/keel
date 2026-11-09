@@ -1,10 +1,4 @@
-// keel/impl/app.hpp: keel::App, and detail::AppImpl, the class App derives from (to expand
-// keel::Bundle<...>s), whose public members are App's: init(), start(), stop(), deinit(),
-// setAsync(), getComponent<T>(), initOrder(), timings() and toDot(). Then keel::compose,
-// keel::isValid, keel::requireValid and keel::run.
-//
-// Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
-//
+// keel::App, compose, isValid, requireValid and run. See docs/reference.md.
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
@@ -34,9 +28,6 @@
 
 namespace keel {
 
-// ===========================================================================
-// keel::App and keel::compose
-
 // Defined below; detail::isApp and detail::runApp name it.
 template <class... Components>
 class App;
@@ -46,8 +37,7 @@ namespace detail {
 template <class Expansion>
 class AppImpl;
 
-// Appends s for a quoted DOT string: a backslash or a double quote gets a backslash (in a
-// label, DOT would read \n, \l, ... as escapes, and \" as a quote).
+// Escapes s for a quoted DOT string (DOT reads \n, \l, \" as escapes).
 inline void appendDotEscaped(std::string& out, std::string_view s) {
     for (char c : s) {
         if (c == '"' || c == '\\') out += '\\';
@@ -55,10 +45,8 @@ inline void appendDotEscaped(std::string& out, std::string_view s) {
     }
 }
 
-// The arrows of one entry of a component's list, from node n<from> to each n<j> with
-// targets[j]; labelled with the target type when it isn't the component's own type
-// (ids[j]), i.e. it resolves through an interface. Not a template, so that toDot() on a
-// large app compiles one loop, not one per entry.
+// The arrows of one entry of a component's list. Not a template, so a large app's toDot()
+// compiles one loop, not one per entry.
 inline void appendDotEdges(std::string& out, std::size_t from, std::span<const bool> targets,
                            std::span<const TypeId> ids, TypeId target, std::string_view style,
                            std::string_view targetName) {
@@ -75,7 +63,6 @@ inline void appendDotEdges(std::string& out, std::size_t from, std::span<const b
     }
 }
 
-// The composition (bundles already expanded) is checked when the class is instantiated.
 // Each failed check is one error.
 template <class... Cs, class Repeated>
 class AppImpl<Expanded<TypeList<Cs...>, Repeated>> {
@@ -100,8 +87,7 @@ public:
         }
     }
 
-    // Not copyable or movable: components hold pointers to each other. (Without the
-    // deleted move, the constructor template above would be picked for a move.)
+    // Without the deleted move, the constructor template would be picked for a move.
     AppImpl(const AppImpl&) = delete;
     AppImpl(AppImpl&&) = delete;
     AppImpl& operator=(const AppImpl&) = delete;
@@ -109,46 +95,25 @@ public:
 
     ~AppImpl() { registry_.deinit(); }
 
-    /// Calls init() on every component, in dependency order; on a keel::Conditional, asks
-    /// enabled() first (a disabled component is skipped from then on). If one throws, or a
-    /// dependency on keel::Alternative<>s finds none or several enabled (keel::Error), the
-    /// components already initialized are deinitialized in reverse, and the exception
-    /// propagates. Callable once. Components with keel::AsyncInit run on threads of their
-    /// own (see there); init() returns or throws after they all finished.
+    /// Calls init() on every component in dependency order; rolls back and rethrows on failure.
     void init() { registry_.init(); }
-    /// setAsync(false) runs every component on the calling thread, in init order, as if
-    /// none derived from keel::AsyncInit or keel::AsyncStart: to debug, to reproduce a run, or to
-    /// narrow down a race. Call it before init() (after, it throws keel::Error). Default true.
+    /// false runs every component on the calling thread; call before init().
     void setAsync(bool async) { registry_.setAsync(async); }
-    /// Calls start() on every enabled component, in dependency order. Requires a successful
-    /// init(). If one throws, the components already started are stopped in reverse, then every
-    /// component is deinitialized in reverse, and the exception propagates. Callable once.
-    /// Components with keel::AsyncStart run on threads of their own, as for keel::AsyncInit.
+    /// Calls start() on every enabled component in dependency order; rolls back on failure.
     void start() { registry_.start(); }
-    /// Calls stop() on every started component, in reverse order. Does nothing if the app
-    /// isn't started.
+    /// Calls stop() on every started component, in reverse order.
     void stop() noexcept { registry_.stop(); }
-    /// Stops the app if it is started, then calls deinit() on every component, in reverse
-    /// order. Does nothing the second time. The destructor calls it too.
+    /// Stops if started, then calls deinit() on every component in reverse order; idempotent.
     void deinit() noexcept { registry_.deinit(); }
 
-    /// For the composition root: a component of this App, or an interface that exactly one
-    /// of them Provides<>. Usable at any time, also before init(); after init(), a
-    /// keel::Conditional that is disabled throws keel::Error (the root may need it before
-    /// init() to configure it, so this isn't a compile error). Two providers of T (also a
-    /// component T plus a subclass that inherits its keel::Provides<T>) is a compile error,
-    /// as for a dependency.
-    /// An interface whose providers are keel::Alternative<T> gets the one init() chose: it
-    /// throws keel::Error before init(), and if none or several are enabled.
+    /// A component, or the one provider of an interface, for the composition root.
     template <class T>
     T& getComponent() {
         constexpr std::size_t providers = Info::template providerCount<T>;
         constexpr bool chosenAtRuntime = Info::template chosenAtRuntime<T>;
         using Providers = typename Info::template Providers<T>;
         using Provider = FirstOr<Providers, void>;
-        // On an invalid compose<...> list, that is the one error. A provider of T that can't
-        // be used as one (InaccessibleProvides, ...) is reported here unless compose<...>
-        // reports it.
+        // One mistake, one error: an invalid compose<...> list is reported there, not here.
         using Diagnosis = std::conditional_t<
             !wellFormed, Passed<T>,
             std::conditional_t<
@@ -161,12 +126,11 @@ public:
                                                           AmbiguousInterface<T, Providers>>>>>>;
         static_assert(sizeof(Diagnosis) > 0);
         if constexpr (chosenAtRuntime && implements<Provider, T>()) {  // else an error above
-            // The alternatives, in init order. Built here: T may have no bindings, if no
-            // component depends on it. On the stack, so the lookup doesn't allocate.
+            // Built here (T may have no bindings), on the stack so the lookup doesn't allocate.
             const auto bindings = alternativeBindings<T>(std::make_index_sequence<providers>{});
             return *static_cast<T*>(registry_.resolve(bindings, typeName<T>(), {}, true)->object);
         } else if constexpr (providers == 1 && implements<Provider, T>()) {
-            // Before init(), even if it is a keel::Conditional: the root may configure it.
+            // Before init() too, even for a keel::Conditional: the root may configure it.
             Provider& provider = storage_.template get<Provider>();
             registry_.checkEnabled(provider, typeName<T>());
             return provider;
@@ -175,51 +139,15 @@ public:
         }
     }
 
-    /// The names of the components in init order (construction order too; stop(),
-    /// deinit() and destruction run in reverse). Known at compile time, so it can be
-    /// checked in a test without running anything:
-    ///   static_assert(ServerApp::initOrder()[0] == "Config");
-    /// Disabled keel::Conditional components are included (enabled() is asked at runtime);
-    /// timings() shows the calls that ran. With keel::AsyncInit and keel::AsyncStart, components with no
-    /// dependency path between them may run in another order, or at the same time; each
-    /// still runs after the components it is ordered after. Names are keel::typeName<T>():
-    /// the type names as the compiler spells them (`Logger`, `edge::Imu<edge::Front>`),
-    /// which may differ between compilers.
+    /// Component names in init order, known at compile time.
     static constexpr std::array<std::string_view, Info::size> initOrder() noexcept {
         return namesOf(typename Info::Sorted{});
     }
 
-    /// How long each lifecycle call took, in the order the calls finished (with
-    /// keel::AsyncInit or keel::AsyncStart, calls on different threads overlap): one entry
-    /// per init(), start(), stop() and deinit() that ran on a component. A disabled
-    /// component has none (its enabled() isn't timed), nor does one whose init() never ran
-    /// because a dependency on keel::Alternative<>s found none or several enabled. A call
-    /// that threw is recorded with `failed`, followed by the rollback's stop() and deinit()
-    /// calls. The view stays valid as long as the App, but
-    /// holds the entries recorded when timings() was called; call it again later for more.
-    /// The destructor's stop() and deinit() can't be seen: call deinit() first, then read
-    /// the timings (with keel::run, read them inside fn, which runs before the shutdown).
-    /// Call it from the thread that drives the App (not from a component's hook, which may
-    /// run while other threads record).
-    ///   app.init();
-    ///   for (const keel::Timing& t : app.timings())
-    ///       std::cout << keel::toString(t.phase) << ' ' << t.component << ' '
-    ///                 << std::chrono::duration<double, std::milli>(t.duration).count() << " ms\n";
+    /// How long each lifecycle call took, in the order the calls finished.
     std::span<const Timing> timings() const noexcept { return registry_.timings(); }
 
-    /// The dependency graph in Graphviz DOT format, to render with Graphviz:
-    ///   std::ofstream("graph.dot") << app.toDot();   // then: dot -Tsvg graph.dot -o graph.svg
-    /// One box per component, in init order, with the interfaces it provides ("provides I",
-    /// "alternative I") and its async base classes ("async init", "async start"). Only the interfaces some
-    /// component of the App refers to are shown (keel::Provides<I> is a base class, and C++20
-    /// can't list a class's bases). An arrow goes from a component to each component it is
-    /// ordered after because of one entry of its list: plain for a required dependency, dashed
-    /// for keel::Optional, dotted with an open head for keel::After, bold for keel::All,
-    /// bold and dashed for keel::Optional<keel::All>; labelled with the interface when it
-    /// resolves through one. Two entries that resolve to the same component (T, and an
-    /// interface T provides) give two arrows. Arrows point to the dependencies, which are drawn
-    /// to the right: init order reads right to left. After init(), disabled components are gray
-    /// and marked "(disabled)"; their arrows are still drawn.
+    /// The dependency graph in Graphviz DOT format.
     std::string toDot() const {
         std::string out = "digraph keel {\n  rankdir=LR;\n  node [shape=box];\n";
         std::vector<std::string> interfaces(Info::size);  // per node: "\nprovides I", ...
@@ -232,8 +160,6 @@ public:
     }
 
 protected:
-    // init, start, fn, then stop and deinit, also if fn throws. Self is the App, which
-    // run(fn) passes to fn.
     template <class Self, class Fn>
     static decltype(auto) runWith(Self& self, Fn&& fn) {
         Registry& registry = static_cast<AppImpl&>(self).registry_;
@@ -245,10 +171,8 @@ protected:
         return call(self, registry, std::forward<Fn>(fn));
     }
 
-    // start, then fn(self), fn(), or a member function of one of the components
-    // (&Server::serve), whose target is resolved first: an alternative that isn't chosen
-    // throws before anything starts. A mistake gives exactly one error: one of the run
-    // diagnostics (diagnostics.hpp), or the compiler's own error inside a generic callable.
+    // One mistake gives exactly one error: a run diagnostic, or the compiler's own inside a
+    // generic callable. A member function's target is resolved before start().
     template <class Self, class Fn>
     static decltype(auto) call([[maybe_unused]] Self& self, Registry& registry, Fn&& fn) {
         using F = std::remove_cvref_t<Fn>;
@@ -271,7 +195,6 @@ protected:
                 return RunTargetAmbiguous<C, typename Info::template Providers<C>>{};
             } else if constexpr (!Info::template chosenAtRuntime<C> &&
                                  isConditional<FirstOr<typename Info::template Providers<C>, void>>) {
-                // One provider, which may be turned off (alternatives are chosen at runtime).
                 return RunTargetConditional<C, FirstOr<typename Info::template Providers<C>, void>>{};
             } else if constexpr (!std::is_invocable_v<F, C&>) {
                 return RunTargetNotCallable<F>{};
@@ -281,7 +204,6 @@ protected:
                 return (target.*fn)();
             }
         } else if constexpr (std::is_invocable_v<Fn>) {
-            // Callable with no arguments. If it also takes the App, it gets the App.
             registry.start();
             if constexpr (std::is_invocable_v<Fn, Self&>) {
                 return std::forward<Fn>(fn)(self);
@@ -289,9 +211,8 @@ protected:
                 return std::forward<Fn>(fn)();
             }
         } else if constexpr (std::is_class_v<F> && !hasPlainCallOperator<F>) {
-            // A generic lambda (or an overloaded function object): called with the App
-            // directly, so an error in its body is reported once, by the compiler, instead
-            // of turning into "not callable".
+            // A generic lambda is called with the App directly, so an error in its body is reported
+            // once by the compiler instead of turning into "not callable".
             registry.start();
             return std::forward<Fn>(fn)(self);
         } else if constexpr (std::is_invocable_v<Fn, Self&>) {
@@ -308,8 +229,7 @@ private:
         (registry_.add(storage_.template get<Sorted>()), ...);
     }
 
-    // Calls visit.template operator()<T>() once for each type T that a component depends
-    // on, in the order the components and their entries first name it.
+    // Calls visit.template operator()<T>() once per type a component depends on.
     template <class Visit>
     static void forEachReferred(Visit&& visit) {
         std::vector<TypeId> seen;
@@ -335,12 +255,10 @@ private:
         }
     }
 
-    // The bindings of T's providers, which are alternatives, in init order.
     template <class T, std::size_t... Js>
     std::array<Binding, sizeof...(Js)> alternativeBindings(std::index_sequence<Js...>) {
         return {bindingOf<T, typename Info::template At<Info::template providersInOrder<T>[Js]>>()...};
     }
-    // (A provider that can't be used as a T is a compile error; it gets no object.)
     template <class T, class C>
     Binding bindingOf() {
         C& component = storage_.template get<C>();
@@ -349,8 +267,7 @@ private:
         return Binding{&static_cast<ComponentBase&>(component), object, isAlternative<T, C>};
     }
 
-    // Binds T to its providers in init order, each to its T subobject. (A provider that
-    // can't be used as a T is a compile error, and not bound.)
+    // A provider that can't be used as a T is a compile error, and not bound.
     template <class T, std::size_t... Js>
     void bindProviders(std::index_sequence<Js...>) {
         registry_.beginBindings(typeId<T>());
@@ -367,8 +284,7 @@ private:
     static constexpr bool anyAsync(TypeList<Sorted...>) noexcept {
         return ((hasAsyncInit<Sorted> || hasAsyncStart<Sorted>) || ...);
     }
-    // The ordering edges of the graph the init order comes from, by init position: what the
-    // async scheduler waits for. A component's dependencies all come before it.
+    // The ordering edges by init position: what the async scheduler waits for.
     void addDependencies() {
         for (std::size_t k = 0; k < Info::size; ++k) {
             for (std::size_t m = 0; m < k; ++m) {
@@ -382,8 +298,7 @@ private:
         return {typeName<Sorted>()...};
     }
 
-    // toDot(): node n<i> is the i-th component of the compose<...> list (bundles expanded).
-    // Nodes, then edges, are written in init order: Ks are init positions.
+    // Node n<i> is the i-th component of the compose<...> list; written in init order (Ks).
     template <std::size_t... Ks>
     void dotNodes(std::string& out, const std::vector<std::string>& interfaces, std::index_sequence<Ks...>) const {
         (dotNode<typename Info::template At<Info::order.index[Ks]>>(out, Info::order.index[Ks],
@@ -400,7 +315,6 @@ private:
         if constexpr (hasAsyncStart<C>) out += "\\nasync start";
         out += disabled ? "\\n(disabled)\", color=gray, fontcolor=gray];\n" : "\"];\n";
     }
-    // Appends "provides T" (or "alternative T") to the label of each provider of T.
     template <class T, std::size_t... Js>
     static void dotInterfaces([[maybe_unused]] std::vector<std::string>& interfaces, std::index_sequence<Js...>) {
         (dotInterface<T, Info::template providersInOrder<T>[Js]>(interfaces), ...);
@@ -408,8 +322,7 @@ private:
     template <class T, std::size_t i>
     static void dotInterface(std::vector<std::string>& interfaces) {
         using C = typename Info::template At<i>;
-        // A component that provides itself shows nothing; one that can't be used as a T is a
-        // compile error.
+        // A component that provides itself shows nothing.
         if constexpr (!std::is_same_v<C, T> && implements<C, T>()) {
             interfaces[i] += isAlternative<T, C> ? "\\nalternative " : "\\nprovides ";
             appendDotEscaped(interfaces[i], typeName<T>());
@@ -427,7 +340,6 @@ private:
                            TypeList<Entries...>) {
         (dotEdgesOfEntry<C, Entries>(out, from), ...);
     }
-    // The edges of one entry: the components edgesOf() orders C after for it.
     template <class C, class Entry>
     static void dotEdgesOfEntry(std::string& out, std::size_t from) {
         using T = typename Split<Entry>::target;
@@ -475,10 +387,7 @@ auto runApp(Fn&& fn, Args&&... args) {
 
 }  // namespace detail
 
-/// A statically composed application. Components (and keel::Bundle<...>s of them) in any
-/// order: keel checks the composition at compile time and derives the order from the
-/// declared dependencies. Drive it with run(fn), or step by step: init(), start(), ...,
-/// stop(), deinit().
+/// A statically composed application.
 template <class... Components>
 class App : public detail::AppImpl<detail::ExpandBundles<Components...>> {
     using Base = detail::AppImpl<detail::ExpandBundles<Components...>>;
@@ -486,26 +395,7 @@ class App : public detail::AppImpl<detail::ExpandBundles<Components...>> {
 public:
     using Base::Base;
 
-    /// Runs the whole lifecycle: init(), start(), then fn, then stop() and deinit(), also
-    /// if fn throws. Returns what fn returns. fn is one of:
-    ///   app.run([] { waitForShutdown(); });          // a callable with no arguments
-    ///   app.run([](ServerApp& running) { ... });     // a callable taking the App
-    ///   app.run(&Server::serve);                     // a member function of a component,
-    ///                                                // called on that component
-    ///   app.run(&Shell::serve);                      // a member function of an interface,
-    ///                                                // called on its one provider
-    /// A callable that accepts both gets the App. Name the App type to write the parameter
-    /// without templates:
-    ///   using ServerApp = keel::App<Server, Config>;
-    ///   ServerApp app;
-    ///   app.run([](ServerApp& running) { running.getComponent<Server>().serve(); });
-    /// If init() or start() throws, the exception propagates after the rollback, and fn
-    /// doesn't run. Calling run() after init() throws keel::Error. A reference returned by fn
-    /// refers to an object that is already deinitialized when run() returns.
-    /// run(&C::f) resolves C after init() and before start(). A C that is (or is provided by)
-    /// a keel::Conditional doesn't compile (RunTargetConditional). On an interface whose
-    /// providers are keel::Alternative<>s, f is called on the enabled one; if none is
-    /// enabled, it throws keel::Error (after deinit(); nothing is started).
+    /// Runs init(), start(), fn, stop() and deinit(); returns what fn returns.
     template <class Fn>
     decltype(auto) run(Fn&& fn) {
         return Base::runWith(*this, std::forward<Fn>(fn));
@@ -521,44 +411,21 @@ public:
     }
 };
 
-/// `auto app = keel::compose<Settings, Console, Greeter>(argc, argv);`
-/// Each component constructible from the arguments receives them; the others are
-/// default-constructed. The list may contain keel::Bundle<...>s.
+/// Constructs a keel::App; components constructible from args receive them.
 template <class... Components, class... Args>
 App<Components...> compose(Args&&... args) {
     return App<Components...>(std::forward<Args>(args)...);
 }
 
-/// Whether keel::compose<Components...> would pass keel's compile-time checks, as a
-/// constant: true or false, never a compile error. For tests of compositions that must
-/// fail, and for choosing between compositions (if constexpr):
-///   static_assert(!keel::isValid<Core, HttpServer>);  // HttpServer needs a Database
-/// It runs every check compose<...> runs on the list and the declared dependencies: types
-/// that aren't components, duplicates, missing or ambiguous dependencies, cycles, and so on.
-/// It doesn't see how the components use them (a getComponent<T>() for an undeclared T),
-/// nor what constructing and destroying them needs: constructor arguments, a missing
-/// default constructor, a private or deleted destructor. For a guard that names the
-/// mistake when it fails, use keel::requireValid.
-/// Every component must be defined (complete) where isValid is first used with it: the
-/// answer is fixed then, and an incomplete type counts as "not a component" from then on,
-/// also in later compositions in the same file.
+/// Whether compose<Components...> would pass the compile-time checks; never a compile error.
 template <class... Components>
 inline constexpr bool isValid = detail::Analysis<detail::ExpandBundles<Components...>>::ok;
 
-/// A composition guard for headers: true, or the compile error compose<...> would give,
-/// naming the mistake (never false). Next to the compositions, so every build variant is
-/// checked on every build, also the ones no binary of the current build uses:
-///   using Core = keel::Bundle<Config, Logger>;
-///   static_assert(keel::requireValid<Core, Database, HttpServer>);      // production
-///   static_assert(keel::requireValid<Core, FakeDatabase, HttpServer>);  // tests
-/// It checks what keel::isValid checks.
+/// true, or the compile error compose<Components...> would give.
 template <class... Components>
 inline constexpr bool requireValid = sizeof(App<Components...>) > 0;
 
-/// Constructs AppType from args and runs it (see App::run), e.g. when main() picks one of
-/// several compositions: `return keel::run<ServerApp>(&Server::serve, argc, argv);`
-/// Returns what fn returns, by value: the app is gone by then, so a reference result is
-/// copied.
+/// Constructs AppType from args and runs it; returns fn's result by value.
 template <class AppType, class Fn, class... Args>
 auto run(Fn&& fn, Args&&... args) {
     return detail::runApp<AppType>(std::forward<Fn>(fn), std::forward<Args>(args)...);

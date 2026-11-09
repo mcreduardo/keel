@@ -1,8 +1,4 @@
-// keel/impl/graph.hpp: the dependency graph at compile time: the init order (a topological
-// sort) and the components on cycles.
-//
-// Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
-//
+// The dependency graph at compile time: the init order and the components on cycles.
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
@@ -14,8 +10,7 @@ namespace keel {
 
 namespace detail {
 
-// The init order of a dependency graph, computed at compile time. graph[i][j]: component
-// i depends on component j.
+// graph[i][j]: component i depends on component j.
 template <std::size_t N>
 using Graph = std::array<std::array<bool, N>, N>;
 
@@ -26,8 +21,8 @@ struct TopologicalOrder {
     std::size_t count = 0;  // < N if some components wait on each other (a cycle)
 };
 
-// Kahn's algorithm, always placing the earliest ready component of the compose<...> list,
-// so components that don't depend on each other keep the list order. O(N²).
+// Kahn's algorithm, always placing the earliest ready component, so independent components
+// keep the compose<...> order. O(N²).
 template <std::size_t N>
 constexpr TopologicalOrder<N> topologicalOrder(const Graph<N>& graph) {
     TopologicalOrder<N> o;
@@ -50,10 +45,7 @@ constexpr TopologicalOrder<N> topologicalOrder(const Graph<N>& graph) {
     return o;
 }
 
-// Depth-first searches over the unplaced components, following the edges forward (i
-// depends on j) or backward. Each search marks the components it reaches that no earlier
-// search reached, and appends each to `finished` once every component it leads to is
-// done. Iterative, and each row is scanned once over all searches: O(N²).
+// Iterative depth-first searches, forward or backward; each row is scanned once overall: O(N²).
 template <std::size_t N>
 struct CycleSearch {
     constexpr CycleSearch(const Graph<N>& g, const std::array<bool, N>& p, bool f) : graph(g), placed(p), forward(f) {}
@@ -90,19 +82,15 @@ struct CycleSearch {
     }
 };
 
-// The components that are on a cycle: the unplaced ones in a strongly connected component
-// of two or more, or that depend on themselves. Components that only depend on a cycle,
-// or sit between two cycles, are left out. Only evaluated when there is a cycle.
-// Kosaraju's algorithm, O(N²).
+// Kosaraju's algorithm, O(N²): unplaced components in an SCC of two or more, or self-dependent.
+// Components that only depend on a cycle are left out. Only evaluated when there is a cycle.
 template <std::size_t N>
 constexpr std::array<bool, N> componentsOnCycles(const Graph<N>& graph, const std::array<bool, N>& placed) {
-    // Pass 1: the order in which forward searches finish the components.
     CycleSearch<N> first(graph, placed, true);
     for (std::size_t i = 0; i < N; ++i) {
         if (!placed[i] && first.mark[i] == 0) first.search(i);
     }
-    // Pass 2: backward searches, latest finished first; each reaches exactly one strongly
-    // connected component.
+    // Backward searches, latest finished first; each reaches exactly one SCC.
     CycleSearch<N> second(graph, placed, false);
     for (std::size_t k = first.finishedCount; k-- > 0;) {
         if (second.mark[first.finished[k]] == 0) second.search(first.finished[k]);

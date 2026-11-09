@@ -1,8 +1,4 @@
-// keel/impl/type_name.hpp: type names and type ids without RTTI, and concat(), which joins
-// names into messages.
-//
-// Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
-//
+// Type names and type ids without RTTI, and concat(), which joins names into messages.
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
@@ -19,16 +15,13 @@ namespace detail {
 template <class T>
 constexpr std::string_view typeName() {
 #if defined(__clang__)
-    // "std::string_view keel::detail::typeName() [T = Logger]". The name itself may contain
-    // ']' and ';' (Arr<int[3]>, a string template argument), so it ends at the last ']'.
+    // "... typeName() [T = Logger]": ends at the last ']' (the name may contain ']' and ';').
     constexpr std::string_view f = __PRETTY_FUNCTION__;
     constexpr auto begin = f.find("T = ") + 4;
     return f.substr(begin, f.rfind(']') - begin);
 #elif defined(__GNUC__)
-    // "constexpr std::string_view keel::detail::typeName() [with T = Logger;
-    // std::string_view = std::basic_string_view<char>]": the name ends where the
-    // std::string_view typedef is listed after it (searched from the end, since the name
-    // may contain ';' and ']'), or at the last ']' if it isn't listed.
+    // "... typeName() [with T = Logger; std::string_view = ...]": ends where the typedef is listed,
+    // searched from the end (the name may contain ';' and ']'), else at the last ']'.
     constexpr std::string_view f = __PRETTY_FUNCTION__;
     constexpr auto begin = f.find("T = ") + 4;
     constexpr auto typedefs = f.rfind("; std::string_view = ");
@@ -51,8 +44,8 @@ constexpr std::string_view typeName() {
 
 using TypeId = const void*;
 
-// Not const: identical read-only constants may be merged by the linker (MSVC /OPT:ICF),
-// which would give two types the same id.
+// Not const: the linker may merge identical read-only constants (MSVC /OPT:ICF), giving two
+// types the same id.
 template <class T>
 struct TypeIdTag {
     static inline char tag{};

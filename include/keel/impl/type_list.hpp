@@ -1,9 +1,4 @@
-// keel/impl/type_list.hpp: type lists (TypeList, contains, UniqueList, Concat, Append,
-// FirstOr, KeepIf, Reorder) and other type-level helpers (alwaysFalse, MemberOf,
-// hasPlainCallOperator).
-//
-// Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
-//
+// Type lists and other type-level helpers.
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
@@ -16,9 +11,6 @@
 namespace keel {
 
 namespace detail {
-
-// ===========================================================================
-// Type utilities
 
 template <class... Ts>
 struct TypeList {};
@@ -76,8 +68,7 @@ struct FirstOrImpl<TypeList<T, Ts...>, Fallback> {
 template <class List, class Fallback>
 using FirstOr = typename FirstOrImpl<List, Fallback>::type;
 
-// The class of a pointer to member function: `R C::*` also matches `R (C::*)(Args...)`,
-// with R deduced as the function type `R(Args...)`.
+// `R C::*` also matches `R (C::*)(Args...)`, with R deduced as the function type.
 template <class M>
 struct MemberOf;
 template <class R, class C>
@@ -85,9 +76,8 @@ struct MemberOf<R C::*> {
     using type = C;
 };
 
-// The types of a list whose entry in Keep is true, and the types of a list in the order of
-// Index. Class templates at namespace scope rather than member functions of Composition:
-// MSVC doesn't expand a pack inside a member function's return type there.
+// Class templates at namespace scope, not members of Composition: MSVC doesn't expand a pack
+// inside a member function's return type there.
 template <class List, auto Keep, class Sequence>
 struct KeepIf;
 template <class... Ts, auto Keep, std::size_t... Is>

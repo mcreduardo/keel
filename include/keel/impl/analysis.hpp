@@ -1,9 +1,4 @@
-// keel/impl/analysis.hpp: the analysis that keel::compose<...> and keel::isValid<...>
-// share: the checks of the compose<...> list itself (ListInfo) and of each component's list
-// (ComponentDiagnosis), combined in Analysis.
-//
-// Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
-//
+// The analysis keel::compose<...> and keel::isValid<...> share (Analysis).
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
@@ -49,8 +44,7 @@ struct ListInfo {
     static constexpr std::size_t size = sizeof...(Cs);
     static constexpr std::array<TypeId, size> ids{typeId<Cs>()...};
 
-    // How many times the I-th type appears earlier in the list. Compares the types, not
-    // their ids: GCC 11 doesn't compare addresses of different objects at compile time.
+    // Compares types, not ids: GCC 11 doesn't compare addresses of different objects at compile time.
     template <std::size_t I>
     static constexpr std::size_t earlier = [] {
         using T = std::tuple_element_t<I, std::tuple<Cs...>>;
@@ -60,7 +54,7 @@ struct ListInfo {
         return n;
     }();
 
-    // One check per entry. A type listed twice is reported once, at its second entry.
+    // A type listed twice is reported once, at its second entry.
     template <class C, std::size_t I>
     using Check = std::conditional_t<
         earlier<I> == 1, DuplicateComponent<C>,
@@ -73,9 +67,8 @@ struct ListInfo {
                                                       Passed<C, std::integral_constant<std::size_t, I>>>>>>>;
 };
 
-// Each check is written once, as an outcome type; each group of checks has a struct that
-// derives from the outcomes (compose<...>: a failure is instantiated, so its static_assert
-// fires) and a constant that tests them (isValid<...>: nothing is instantiated).
+// Each check is an outcome type: compose<...> derives from them (a failure's static_assert
+// fires), isValid<...> tests them (nothing is instantiated).
 
 template <class List, class Indices>
 struct ListDiagnosis;
@@ -87,12 +80,10 @@ template <class... Cs, std::size_t... Is>
 inline constexpr bool listPasses<ListInfo<Cs...>, std::index_sequence<Is...>> =
     (isPassed<typename ListInfo<Cs...>::template Check<Cs, Is>> && ...);
 
-// The checks of one component C's list, each entry as written.
 template <class Info, class C, class Entries = EntriesOf<C>>
 struct ComponentDiagnosis;
-// An alternative of anything must be a keel::Conditional; checked per component, whether
-// or not something refers to its interfaces. The tag of the passed check is a type no list
-// entry can name, so that it never repeats an entry's Passed<C, Entry> base.
+// Checked per component, whatever refers to its interfaces. The tag is a type no entry can name,
+// so it never repeats an entry's Passed<C, Entry> base.
 struct AlternativeConditionalChecked {};
 template <class C>
 using ConditionalCheck = std::conditional_t<std::is_base_of_v<AlternativeMarker, C> && !isConditional<C>,
@@ -105,17 +96,15 @@ template <class Info, class C, class... Entries>
 inline constexpr bool entriesPass<Info, C, TypeList<Entries...>> =
     isPassed<ConditionalCheck<C>> && (isPassed<typename Info::template Check<C, Entries>> && ...);
 
-// A component whose own list has a duplicate is not checked further: the duplicate is the
-// one error.
+// A list with a duplicate is not checked further: the duplicate is the one error.
 template <class Info, class C>
 using ComponentOutcome = std::conditional_t<uniqueEntriesOf<C>, ComponentDiagnosis<Info, C>,
                                             ComponentListCheck<ComponentOf<C>>>;
 template <class Info, class C>
 inline constexpr bool componentPasses = uniqueEntriesOf<C> && entriesPass<Info, C>;
 
-// Every component's checks at once, so each mistake in each component is reported. Only on
-// a well-formed list (naming the checks reads each component's list); otherwise the list's
-// own check fails, and that is the error.
+// Only on a well-formed list (naming the checks reads each component's list); otherwise the
+// list's own check is the error.
 template <class Info, class List>
 struct ComponentsDiagnosis;
 template <class Info, class... Cs>
@@ -130,9 +119,8 @@ struct BundleDiagnosis;
 template <class... Bundles>
 struct BundleDiagnosis<TypeList<Bundles...>> : DuplicateBundle<Bundles>... {};
 
-// The analysis of a compose<...> list: its components (bundles already expanded), and the
-// bundles reached more than once. The graph analysis only runs on a list of distinct,
-// concrete components, so a list that isn't one reports that and nothing else.
+// The graph analysis runs only on a list of distinct, concrete components, so a list that
+// isn't one reports that and nothing else.
 template <class Expansion>
 struct Analysis;
 template <class... Cs, class Repeated>
@@ -142,14 +130,13 @@ struct Analysis<Expanded<TypeList<Cs...>, Repeated>> {
     static constexpr bool wellFormed = listPasses<List, Indices>;
     using Info = Composition<std::conditional_t<wellFormed, TypeList<Cs...>, TypeList<>>>;
 
-    // The outcomes, by group.
     using OfBundles = BundleDiagnosis<Repeated>;
     using OfList = ListDiagnosis<List, Indices>;
     using OfComponents = std::conditional_t<wellFormed, ComponentsDiagnosis<Info, TypeList<Cs...>>, Passed<>>;
     using NonEmpty = std::conditional_t<(sizeof...(Cs) > 0), Passed<>, EmptyComposition<>>;
     using Acyclic = std::conditional_t<Info::acyclic, Passed<>, DependencyCycle<typename Info::Cycle>>;
 
-    // Whether every outcome above is Passed: what keel::isValid<...> returns.
+    // What keel::isValid<...> returns.
     static constexpr bool ok = std::is_same_v<Repeated, TypeList<>> && wellFormed &&
                                componentsPass<wellFormed, Info, TypeList<Cs...>> && isPassed<NonEmpty> &&
                                isPassed<Acyclic>;

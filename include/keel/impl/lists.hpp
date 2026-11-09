@@ -1,10 +1,4 @@
-// keel/impl/lists.hpp: reading the two lists a user writes: the entries of a
-// keel::Component<...> list, by kind (Split), and the keel::Bundle<...>s of a compose<...>
-// list (ExpandBundles). Also the definitions of keel::Provides and keel::Alternative, here
-// because they check their interface with couldBeComponent, which this part defines.
-//
-// Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
-//
+// Reading the lists a user writes (Split, ExpandBundles), and keel::Provides and keel::Alternative.
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
@@ -18,11 +12,8 @@ namespace keel {
 
 namespace detail {
 
-// How a component uses the type an entry of its keel::Component<...> list names.
-// `misnested` is All<Optional<I>>, and `listedProvides` / `listedAlternative`
-// keel::Provides<I> / keel::Alternative<I>, which are base classes, not entries
-// (ProvidesAsDependency, AlternativeAsDependency), and `listedAsync` keel::AsyncInit or
-// keel::AsyncStart, base classes too (AsyncAsDependency); all are reported at compose time.
+// How an entry uses the type it names. The listed* and misnested kinds are mistakes,
+// reported at compose time.
 enum class Use {
     required,
     optional,
@@ -46,10 +37,7 @@ struct EmptySplit {
     using listedAsync = TypeList<>;
 };
 
-// Separates the entries of a keel::Component<...> list by kind: required, optional,
-// ordering only, collections (All<I>, Optional<All<I>>), and the base classes listed by
-// mistake (Provides<I>, Alternative<I>, AsyncInit, AsyncStart). `target` is the type the
-// entry names (for AsyncInit and AsyncStart, the marker itself).
+// Separates the entries of a keel::Component<...> list by kind. `target` is the type the entry names.
 template <class D>
 struct Split : EmptySplit {
     using required = TypeList<D>;
@@ -129,10 +117,7 @@ inline constexpr bool isDependencyMarker<Alternative<T>> = true;
 template <class T>
 inline constexpr bool isDependencyMarker<All<T>> = true;
 
-// Optional<T>, After<T> and Optional<All<T>> may name a type that isn't composed, and
-// All<T> an interface, but it must be a type that could be one: a class,
-// not const or volatile, not another marker (AsyncInit and AsyncStart included). Anything
-// else would never match.
+// A type an entry may name: a class, not cv-qualified, not a marker. Anything else would never match.
 template <class T>
 inline constexpr bool couldBeComponent =
     std::is_class_v<T> && !std::is_const_v<T> && !std::is_volatile_v<T> && !isDependencyMarker<T>;
@@ -142,9 +127,7 @@ inline constexpr bool isBundle = false;
 template <class... Cs>
 inline constexpr bool isBundle<Bundle<Cs...>> = true;
 
-// The result of expanding the keel::Bundle<...>s of a compose<...> list: the components,
-// and the bundles reached more than once in the tree (each once). A repeated bundle is
-// expanded only the first time, so it is reported as one DuplicateBundle<B>, not as a
+// A repeated bundle is expanded only the first time, so it is one DuplicateBundle<B>, not a
 // duplicate of each of its components.
 template <class Components, class RepeatedBundles = TypeList<>>
 struct Expanded {
@@ -152,8 +135,7 @@ struct Expanded {
     using repeated = RepeatedBundles;
 };
 
-// Expands the list left to right, in place: a bundle's components take its position.
-// Seen: the bundles expanded so far.
+// Left to right, in place: a bundle's components take its position.
 template <class Seen, class Repeated, class Out, class... Rest>
 struct Expand : Expanded<Out, Repeated> {};
 template <bool bundle, class Seen, class Repeated, class Out, class First, class... Rest>
@@ -170,7 +152,6 @@ struct ExpandFirst<true, Seen, Repeated, Out, Bundle<Inner...>, Rest...>
                  Out, Rest...>,
           Expand<Append<Seen, Bundle<Inner...>>, Repeated, Out, Inner..., Rest...>> {};
 
-// A list without bundles is used as is.
 template <bool anyBundle, class... Cs>
 struct ExpandImpl {
     using type = Expanded<TypeList<Cs...>>;
@@ -185,9 +166,8 @@ using ExpandBundles = typename ExpandImpl<(isBundle<Cs> || ...), Cs...>::type;
 
 }  // namespace detail
 
-// See the declaration in markers.hpp. Empty. I is checked in the constructor rather than in
-// the class body: a failed check there would make the derived component invalid, and every
-// later use of it would add an error.
+// Defined here, after couldBeComponent. I is checked in the constructor, not the class body:
+// a failed check there would make every later use of the component an error.
 template <class I>
 struct Provides {
     constexpr Provides() noexcept {
@@ -199,12 +179,11 @@ struct Provides {
 };
 
 namespace detail {
-// The common base of every keel::Alternative<I>: whether a component is an alternative of
-// anything, without knowing I (AlternativeNotConditional).
+// Lets keel know a component is an alternative of something without knowing I.
 struct AlternativeMarker {};
 }  // namespace detail
 
-// See the declaration in markers.hpp. Checked as keel::Provides<I> is.
+// Defined here, after couldBeComponent; checked as keel::Provides<I> is.
 template <class I>
 struct Alternative : detail::AlternativeMarker {
     constexpr Alternative() noexcept {

@@ -1,9 +1,4 @@
-// keel/impl/component_info.hpp: what keel reads from a component type: its
-// keel::Component<...> base and list (ComponentInfo), the entries init() checks (Needs), and
-// traits: isConditional, hasAsyncInit, hasAsyncStart, implements, derivesFromComponent.
-//
-// Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
-//
+// What keel reads from a component type: its keel::Component<...> list, Needs, and traits.
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
@@ -22,8 +17,7 @@ namespace keel {
 
 namespace detail {
 
-// The keel::Component<...> base of a component C, deduced, so that members of C named like
-// Component's own (Entries, ListedAlternatives, ...) don't hide them. Never defined.
+// Deduced, so that members of C named like Component's own (Entries, ...) don't hide them.
 template <class... Dependencies>
 Component<Dependencies...>* componentBaseOf(Component<Dependencies...>*);
 // A class template, so that each C is deduced once (an alias would deduce on every use).
@@ -38,9 +32,7 @@ template <class C>
 using ComponentOf = typename ComponentInfo<C>::Base;
 template <class C>
 using EntriesOf = typename ComponentInfo<C>::Entries;
-// The interfaces C names in its list by mistake: keel::Provides<I> and keel::Alternative<I>
-// (ProvidesAsDependency, AlternativeAsDependency). They count as provided, so that the
-// mistake is the one error.
+// Provides<I>/Alternative<I> listed by mistake count as provided, so the mistake is the one error.
 template <class C>
 using ListedOf = typename ComponentInfo<C>::Listed;
 template <class C>
@@ -48,9 +40,7 @@ using ListedAlternativesOf = typename ComponentInfo<C>::Alternatives;
 template <class C>
 inline constexpr bool uniqueEntriesOf = ComponentOf<C>::uniqueEntries;
 
-// An entry of a component's keel::Component<...> list that init() checks (a required
-// dependency or Optional<T>, which may resolve to keel::Alternative<>s chosen at runtime):
-// the type it names and how it is used.
+// An entry init() checks: a required or Optional<T> dependency, which may resolve to alternatives.
 struct Need {
     TypeId id;
     std::string_view (*name)();
@@ -78,26 +68,20 @@ template <class... Entries>
 struct NeedsTable<TypeList<Entries...>> {
     static constexpr const std::array<Need, sizeof...(Entries)>& table = needsOf<Entries...>;
 };
-// The checked entries of C's list.
 template <class C>
 using Needs = NeedsTable<typename NeedsImpl<EntriesOf<C>>::Checked>;
 
-// C is a keel::Conditional that keel can ask: it derives from it publicly and once.
-// (Privately or twice is InaccessibleConditional, at compose time.) False for an
-// incomplete C.
+// Public and once (else InaccessibleConditional at compose time). False for an incomplete C.
 template <class C>
 inline constexpr bool isConditional = std::is_convertible_v<C*, Conditional*>;
 
-// C derives from keel::AsyncInit / keel::AsyncStart publicly and once. (Privately or twice
-// is InaccessibleAsync, at compose time.)
+// Public and once (else InaccessibleAsync at compose time).
 template <class C>
 inline constexpr bool hasAsyncInit = std::is_convertible_v<C*, AsyncInit*>;
 template <class C>
 inline constexpr bool hasAsyncStart = std::is_convertible_v<C*, AsyncStart*>;
 
-// A C can be used as an I: I could be a component (couldBeComponent) and is C itself or a
-// public, unambiguous base of C. A pointer conversion checks access and ambiguity, and is
-// simply false for an incomplete I (C can't derive from it then).
+// The pointer conversion checks access and ambiguity, and is false for an incomplete I.
 template <class C, class I>
 constexpr bool implements() {
     if constexpr (couldBeComponent<I>) {
@@ -107,9 +91,7 @@ constexpr bool implements() {
     }
 }
 
-// T derives publicly, and once, from one keel::Component<...>. A pointer conversion checks
-// access and ambiguity too; no pointer is formed for a non-class T (a reference, a
-// function type). An incomplete T is not a component.
+// The pointer conversion checks access and ambiguity. An incomplete T is not a component.
 template <class T>
 constexpr bool derivesFromComponentImpl() {
     if constexpr (std::is_class_v<T>) {

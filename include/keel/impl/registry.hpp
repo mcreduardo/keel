@@ -1,9 +1,4 @@
-// keel/impl/registry.hpp: the runtime state of an App (Registry), and the lookups: what a
-// dependency resolves to, and ComponentBase's lookup functions, defined here because they
-// need the Registry.
-//
-// Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
-//
+// The runtime state of an App (Registry) and the lookups, including ComponentBase's.
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
@@ -30,9 +25,6 @@ namespace keel {
 
 namespace detail {
 
-// ===========================================================================
-// Runtime state of an App: the components in init order, and lookups by type.
-
 class Registry {
 public:
     Registry() = default;
@@ -53,18 +45,15 @@ public:
         dependencies_.emplace_back();
     }
 
-    // The lookups of one type: the App binds each type an entry of a component's list refers
-    // to, once, to its providers in init order. (Types nothing refers to have no bindings:
-    // App::getComponent<T>() finds a single provider in its storage.)
+    // Only types some entry refers to get bindings; App::getComponent<T>() finds a single
+    // provider in its storage.
     bool beginBindings(TypeId id) { return bindings_.try_emplace(id).second; }  // false if bound already
     void bind(TypeId id, Binding binding) { bindings_[id].push_back(binding); }
 
-    // The component at init position `dependent` is ordered after the one at `dependency`
-    // (an earlier position). Only needed, and only added, when some component is async.
+    // Only added when some component is async.
     void addDependency(std::size_t dependent, std::size_t dependency) {
         dependencies_[dependent].push_back(dependency);
     }
-    // Some component is async: the phases may need the scheduler (else it is never used).
     void setHasAsync() noexcept { hasAsync_ = true; }
     void setAsync(bool async) {
         if (state_ != State::building) throw Error("keel: setAsync() must be called before init()");
@@ -76,26 +65,17 @@ public:
     void stop() noexcept;
     void deinit() noexcept;
 
-    /// init() was called: components may look up their dependencies.
     bool initCalled() const noexcept { return state_ != State::building; }
 
-    // What a dependency on one id resolves to: its one bound component that isn't
-    // disabled, or nullptr if there is none and !required. Several bindings exist only for
-    // keel::Alternative<>s (else the lookup doesn't compile). Throws if there is none and
-    // required, if several alternatives are enabled, or if init() hasn't chosen yet. user
-    // names the component that asks, for the messages; empty for the composition root.
-    // (For a component, a required dependency on a single disabled keel::Conditional
-    // doesn't compile; the root's getComponent<T>() can still meet one.)
+    // Several bindings exist only for keel::Alternative<>s. user is empty for the composition root,
+    // which, unlike a component, can meet a required dependency on a disabled keel::Conditional.
     const Binding* resolve(TypeId id, std::string_view dependency, std::string_view user, bool required) const {
         return resolve(findAll(id), dependency, user, required);
     }
-    // The same among these bindings (the root's lookup of an interface, which it finds itself).
     const Binding* resolve(std::span<const Binding> bindings, std::string_view dependency, std::string_view user,
                            bool required) const;
-    // For the root's getComponent<T>() on T's single provider: throws if init() disabled it.
     void checkEnabled(const ComponentBase& provider, std::string_view dependency) const;
 
-    // Every component bound to id, in init order (empty if none).
     const std::vector<Binding>& findAll(TypeId id) const {
         static const std::vector<Binding> none;
         auto it = bindings_.find(id);
@@ -104,15 +84,12 @@ public:
 
     std::span<const Timing> timings() const noexcept { return timings_; }
 
-    // The component at this position of the init order is a keel::Conditional whose
-    // enabled() returned false.
     bool disabled(std::size_t position) const noexcept {
         return components_[position]->state_ == ComponentBase::State::disabled;
     }
 
 private:
-    // stopped vs initialized: the components are in the same state, but a stopped app
-    // can't be started again.
+    // stopped vs initialized: same component states, but a stopped app can't be started again.
     enum class State { building, initialized, started, stopped, failed, deinitialized };
 
     class Schedule;
@@ -121,18 +98,13 @@ private:
         return concat({who, ": ", provider == dependency ? "" : "its provider ", provider,
                        " is disabled (its enabled() returned false)"});
     }
-    // Throws the error of a resolve() that found no usable binding.
     [[noreturn]] void resolveFailed(std::span<const Binding> bindings, std::string_view dependency,
                                     std::string_view user, bool alternatives, bool undecided,
                                     std::size_t enabledCount) const;
 
-    // Runs init() or start() on every component (Phase::init or Phase::start), each after
-    // the ones it is ordered after; the async ones on their own threads (Schedule). Throws
-    // after every thread has finished; the caller rolls back.
+    // Throws after every thread has finished; the caller rolls back.
     void runPhase(Phase phase);
-    // The init or start step of the component at init position i, on the current thread.
     void runOne(Phase phase, std::size_t i);
-    // The component at init position i runs this phase on its own thread.
     bool runsAsync(Phase phase, std::size_t i) const noexcept;
 
     bool hasAsync_ = false;  // some component is async (known at compile time)
@@ -141,9 +113,8 @@ private:
     void stopAll() noexcept;
     void deinitAll() noexcept;
 
-    // Calls hook on c and records how long it took, also if it throws. init() reserves
-    // room for every call an App can make (at most one per component and phase), so
-    // recording never allocates, also in stop() and deinit(), which must not throw.
+    // init() reserves room for every call an App can make, so recording never allocates,
+    // also in the noexcept stop() and deinit().
     template <class Hook>
     void timed(Phase phase, ComponentBase& c, Hook hook) {
         struct Recorder {  // records when the call returns or throws
@@ -160,14 +131,12 @@ private:
         (c.*hook)();
         recorder.failed = false;
     }
-    // May run on several threads at once (async components): the entries are appended
-    // under timingsMutex_, in the order the calls finish.
+    // May run on several threads at once; appends under timingsMutex_.
     void record(Phase phase, const ComponentBase& c, std::chrono::steady_clock::time_point begin,
                 bool failed) noexcept {
         const auto duration = std::chrono::steady_clock::now() - begin;
         const std::lock_guard lock(timingsMutex_);
-        // Can't be full (see timed()); checked anyway, since a push_back that allocated
-        // could throw here, in a noexcept function.
+        // Can't be full (see timed()); checked since an allocating push_back could throw in noexcept code.
         assert(timings_.size() < timings_.capacity());
         if (timings_.size() == timings_.capacity()) return;
         timings_.push_back(
@@ -182,13 +151,13 @@ private:
     std::mutex timingsMutex_;
     std::vector<Timing> timings_;  // in the order the calls finished
 
-    // Written only by the thread that drives the App (init(), start(), ...), and never while
-    // a phase's threads run. Atomic for lookups from threads the components start themselves.
+    // Written only by the driving thread, never while a phase's threads run. Atomic for lookups
+    // from threads the components start themselves.
     std::atomic<State> state_ = State::building;
 };
 
-// The caller's own lifecycle is checked first, so a misplaced lookup fails whether or not
-// an optional dependency happens to be composed.
+// The caller's own lifecycle is checked first, so a misplaced lookup fails whether or not an
+// optional dependency happens to be composed.
 inline void ComponentBase::checkCanUse(std::string_view accessor, std::string_view dependency) const {
     if (registry_ == nullptr) {
         throw Error(concat({"keel: ", accessor, "<", dependency,
@@ -221,10 +190,7 @@ inline void* ComponentBase::useIfEnabled(const Binding& b, std::string_view depe
     return use(b, dependency);
 }
 
-// Runs before init(): the dependencies come earlier in the init order, so each is
-// initialized or disabled by now (with async components too: see Registry::Schedule).
-// The compile-time checks leave one way to fail: keel::Alternative<>s of which none (for a
-// required dependency) or several are enabled.
+// The dependencies are initialized or disabled by now, async too (see Registry::Schedule).
 inline void ComponentBase::checkDependencies() const {
     for (std::size_t i = 0; i < needCount_; ++i) {
         const Need& need = needs_[i];
@@ -232,7 +198,6 @@ inline void ComponentBase::checkDependencies() const {
     }
 }
 
-// resolve() never returns a disabled binding.
 inline void* ComponentBase::use(const Binding& b, std::string_view dependency) const {
     const State state = b.owner->state_;
     if (state == State::initialized || state == State::started) return b.object;
@@ -261,8 +226,7 @@ inline const Binding* Registry::resolve(std::span<const Binding> bindings, std::
     resolveFailed(bindings, dependency, user, alternatives, undecided, enabledCount);
 }
 
-// The error of a failed resolve(), in the order resolve() checks. Builds the names only
-// here, so that a lookup that succeeds doesn't allocate.
+// Builds the names only here, so that a lookup that succeeds doesn't allocate.
 inline void Registry::resolveFailed(std::span<const Binding> bindings, std::string_view dependency,
                                     std::string_view user, bool alternatives, bool undecided,
                                     std::size_t enabledCount) const {

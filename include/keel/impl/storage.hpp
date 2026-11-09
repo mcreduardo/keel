@@ -1,8 +1,4 @@
-// keel/impl/storage.hpp: the storage of a composition: its components, constructed in
-// dependency order from compose()'s arguments (or by default), destroyed in reverse.
-//
-// Part of keel.hpp: tools/amalgamate.py joins the parts into the single header.
-//
+// The storage of a composition: components constructed in dependency order, destroyed in reverse.
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Eduardo Rocha
 #pragma once
@@ -16,9 +12,6 @@ namespace keel {
 
 namespace detail {
 
-// ===========================================================================
-// Storage of a composition
-
 template <class C, class... Args>
 C construct(Args&... args) {
     if constexpr (std::is_constructible_v<C, Args&...>) {
@@ -31,8 +24,7 @@ C construct(Args&... args) {
     }
 }
 
-// compose()'s arguments, passed to every Slot as one object: GCC 11 rejects expanding the
-// arguments inside the expansion over the slots (Slot<Sorted>(args...)...).
+// One object for every Slot: GCC 11 rejects expanding args inside the expansion over the slots.
 template <class... Args>
 struct Arguments {
     std::tuple<Args&...> refs;
@@ -50,7 +42,6 @@ template <class List>
 struct Storage;
 template <class... Sorted>
 struct Storage<TypeList<Sorted...>> : Slot<Sorted>... {
-    // Bases are constructed in dependency order and destroyed in reverse.
     template <class... Args>
     explicit Storage(Args&... args) : Storage(Arguments<Args...>{{args...}}) {}
     template <class... Args>
