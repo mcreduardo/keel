@@ -116,11 +116,11 @@ struct Composition<TypeList<Cs...>> {
     template <class T>
     static constexpr std::size_t providerCount = count(providers<T>);
 
-    // The entries of List (default: the components) whose bit in keep is set.
-    template <Row keep, class List = TypeList<Cs...>>
-    using Keep = typename KeepIf<List, keep, std::make_index_sequence<size>>::type;
+    // KeepIf is spelled out at each use: GCC 11 crashes on a member alias template with a
+    // std::array template parameter.
+    using Indices = std::make_index_sequence<size>;
     template <class T>
-    using Providers = Keep<providers<T>>;
+    using Providers = typename KeepIf<TypeList<Cs...>, providers<T>, Indices>::type;
 
     // Several providers are fine for one T if each is a keel::Alternative<T>.
     template <class T>
@@ -135,7 +135,8 @@ struct Composition<TypeList<Cs...>> {
     template <class T>
     static constexpr Row plainProviders{(isProvider<T, Cs> && !isAlternative<T, Cs>)...};
     template <class T>
-    using Mixed = MixedProviders<T, Keep<plainProviders<T>>, Keep<alternatives<T>>>;
+    using Mixed = MixedProviders<T, typename KeepIf<TypeList<Cs...>, plainProviders<T>, Indices>::type,
+                                 typename KeepIf<TypeList<Cs...>, alternatives<T>, Indices>::type>;
 
     static constexpr Row conditionals{isConditional<Cs>...};
     template <class T>
@@ -170,7 +171,8 @@ struct Composition<TypeList<Cs...>> {
     template <class T>
     static constexpr std::size_t brokenCount = count(broken<T>);
     template <class T>
-    using Broken = typename ProviderFailuresOf<Keep<broken<T>, TypeList<ProviderFailure<Cs, T>...>>>::type;
+    using Broken = typename ProviderFailuresOf<
+        typename KeepIf<TypeList<ProviderFailure<Cs, T>...>, broken<T>, Indices>::type>::type;
 
     template <class T>
     static constexpr Row dependents{dependsOn<T, Cs>...};
@@ -194,13 +196,13 @@ struct Composition<TypeList<Cs...>> {
     template <class C, class T>
     static constexpr Row unconditionalOthers{(!std::is_same_v<C, Cs> && isProvider<T, Cs> && !isConditional<Cs>)...};
     template <class C, class T>
-    using Others = Keep<others<C, T>>;
+    using Others = typename KeepIf<TypeList<Cs...>, others<C, T>, Indices>::type;
 
     // For a dependency of C on T: the likely forgotten keel::Provides<T>.
     template <class C, class T>
     static constexpr Row derived{(!std::is_same_v<C, Cs> && !isProvider<T, Cs> && implements<Cs, T>())...};
     template <class C, class T>
-    using Derived = Keep<derived<C, T>>;
+    using Derived = typename KeepIf<TypeList<Cs...>, derived<C, T>, Indices>::type;
 
     // Passed if fine, else the named failure (diagnostics.hpp), wrapped in an Outcome<>. The
     // types a failure names are this function's template parameters, not local aliases: MSVC
@@ -288,7 +290,7 @@ struct Composition<TypeList<Cs...>> {
     static constexpr bool acyclic = order.count == size;
     static constexpr Row onCycle = acyclic ? Row{} : componentsOnCycles(graph, order.placed);
 
-    using Cycle = Keep<onCycle>;
+    using Cycle = typename KeepIf<TypeList<Cs...>, onCycle, Indices>::type;
     using Sorted = std::conditional_t<
         acyclic, typename Reorder<TypeList<Cs...>, order.index, std::make_index_sequence<size>>::type, TypeList<Cs...>>;
 };
