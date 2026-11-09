@@ -5,7 +5,7 @@ All notable changes to keel are listed here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html); before 1.0, a new minor version
 may change the API.
 
-## 0.1.0 – unreleased
+## 0.1.0 – 2026-11-09
 
 First release: a single C++20 header, standard library only, no RTTI.
 
