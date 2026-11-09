@@ -1,56 +1,9 @@
 # To do
 
-- **Constructor arguments that almost match.** `compose<...>(args...)` gives each component
-  the arguments if it can be constructed from them, and default-constructs it otherwise. A
-  near-miss falls back to the default constructor silently:
-  - the constructor call is ambiguous;
-  - the constructor takes only some of the arguments;
-  - an argument is move-only (arguments are passed as lvalues);
-  - an implicit conversion picks a different constructor than intended.
-
-  Decide whether a near-miss should be a compile error, or keep the rule and document it.
-
-- **Warn about unused dependencies.** A component declares a dependency but never calls
-  `getComponent<T>()` for it. The dependency still constrains the order and must be composed,
-  so it should be reported. The compiler can't see which `getComponent<T>()` calls a
-  component makes, so this would be a runtime check: record the calls and report the
-  dependencies that were never fetched, for example after `init()` or at shutdown.
-
-- **Compose with an explicit init order.** Some users will want to state the init (and
-  construction) order themselves instead of having it derived from the dependencies. A
-  variant of `compose` would take the components in the order the user wants and check it
-  at compile time: every component comes after its dependencies, nothing is missing or
-  listed twice. A wrong order fails compilation with an error that names the components
-  involved; keel never reorders the list.
-
-- **A component that derives from T without `Provides<T>` is a compile error.** If a
-  component depends on T (required, `Optional<T>` or `After<T>`), nothing composed is or
-  provides T, and a composed component derives from T, keel reports
-  `UndeclaredProvider<Component, T, Derived>` instead of a missing dependency (required) or
-  a silent nullptr / no ordering (Optional, After). Alternatives: resolve T to the
-  derived component automatically; or keep ignoring it. Chosen because dependencies match
-  by exact type or declared `Provides<T>`, one rule, and the silent cases hid the mistake.
-  Cost: a composition that derives from T on purpose without providing it must add
-  `Provides<T>` or not depend on T. When T is itself a component (`FakeClock : Clock`), the
-  error is `UndeclaredSubclass<C, T, Derived>`: compose T, or let T provide itself
-  (`Clock : Component<>, Provides<Clock>`), which its subclasses inherit. Still silent: an
-  `After<T>`/`Optional<T>` whose T nothing composed derives from
-  (`After<std::string>`, or a forgotten compose), and an I that a composed class derives
-  from twice (non-virtual diamond: not convertible, so no UndeclaredProvider, and
-  `Optional<I>` stays nullptr).
-  For `All<I>` and `Optional<All<I>>` a similar check runs even when I has providers:
-  `LeftOutOfAll<C, I, Derived>`, because a composed class that derives from I without
-  providing it would silently be left out of the list. (For a single dependency with one
-  provider it doesn't: the dependency resolves, and the other class may be unrelated.) There
-  is no opt-out: a component that derives from I for unrelated reasons can't stay out of
-  `All<I>` except by not deriving from I. The collecting component itself is exempt: one
-  that lists `All<I>` and derives from I without providing it is accepted (and not in its
-  own list).
-
-- **`After<I>` with several providers orders after all of them.** A required or
-  `Optional<I>` dependency with two providers is an ambiguity error
-  (`AmbiguousDependency`), but `After<I>` is ordering only and gives no access, so "after
-  every provider" is well defined. Alternative: report it as ambiguous too, for one rule.
+- **Constructor arguments that almost match:** issue #1.
+- **Report unused dependencies:** issue #2.
+- **Compose with an explicit init order:** issue #3.
+- **`After<I>` with several providers should be ambiguous:** issue #4.
 
 - **Providing and depending on the same interface.** `C : Component<I>, Provides<I>` is
   reported as `DependencyCycle<TypeList<C>>` (one provider) or `AmbiguousDependency` (more),
