@@ -70,11 +70,7 @@ class AppImpl<Expanded<TypeList<Cs...>, Repeated>> {
     static constexpr bool wellFormed = Checks::wellFormed;
     using Info = typename Checks::Info;
 
-    static_assert(sizeof(typename Checks::OfBundles) > 0);     // names a bundle reached twice
-    static_assert(sizeof(typename Checks::OfList) > 0);        // names a non-component or a duplicate
-    static_assert(sizeof(typename Checks::OfComponents) > 0);  // names missing dependencies, ...
-    static_assert(sizeof(typename Checks::NonEmpty) > 0);
-    static_assert(sizeof(typename Checks::Acyclic) > 0);
+    static_assert(sizeof(Report<typename Checks::Outcomes>) > 0);
 
 public:
     template <class... Args>
@@ -112,15 +108,15 @@ public:
         using Provider = FirstOr<Providers, void>;
         // One mistake, one error: an invalid compose<...> list is reported there, not here.
         using Diagnosis = std::conditional_t<
-            !wellFormed, Passed<T>,
+            !wellFormed, Passed,
             std::conditional_t<
                 (Info::template brokenCount<T> > 0), typename Info::template RootBroken<T>,
                 std::conditional_t<
-                    providers == 1 || chosenAtRuntime, Passed<T>,
-                    std::conditional_t<providers == 0, NotInApp<T>,
-                                       std::conditional_t<Info::template mixedProviders<T>,
-                                                          typename Info::template Mixed<T>,
-                                                          AmbiguousInterface<T, Providers>>>>>>;
+                    providers == 1 || chosenAtRuntime, Passed,
+                    std::conditional_t<
+                        providers == 0, NotInApp<T>,
+                        std::conditional_t<Info::template mixedProviders<T>, typename Info::template Mixed<T>,
+                                           AmbiguousInterface<T, typename Info::template Providers<T>>>>>>>;
         static_assert(sizeof(Diagnosis) > 0);
         if constexpr ((providers == 1 || chosenAtRuntime) && implements<Provider, T>()) {  // else an error above
             // Built here (T may have no bindings), on the stack so the lookup doesn't allocate.
@@ -170,32 +166,7 @@ protected:
     static decltype(auto) call([[maybe_unused]] Self& self, Registry& registry, Fn&& fn) {
         using F = std::remove_cvref_t<Fn>;
         if constexpr (std::is_member_function_pointer_v<F>) {
-            using C = typename MemberOf<F>::type;  // a component, or an interface (Provides<C>)
-            constexpr std::size_t targets = wellFormed ? Info::template providerCount<C> : 1;
-            if constexpr (Info::template brokenCount<C> > 0) {
-                // A provider of C that can't be used as one, reported here or by compose<...>.
-                using Broken = typename Info::template RootBroken<C>;
-                if constexpr (isPassed<Broken>) {
-                    return RunMistake{};
-                } else {
-                    return RunTargetMistake<Broken>{};
-                }
-            } else if constexpr (targets == 0) {
-                return RunTargetNotComposed<C, F>{};
-            } else if constexpr (targets > 1 && Info::template mixedProviders<C>) {
-                return RunTargetMistake<typename Info::template Mixed<C>>{};
-            } else if constexpr (targets > 1 && !Info::template chosenAtRuntime<C>) {
-                return RunTargetAmbiguous<C, typename Info::template Providers<C>>{};
-            } else if constexpr (!Info::template chosenAtRuntime<C> &&
-                                 isConditional<FirstOr<typename Info::template Providers<C>, void>>) {
-                return RunTargetConditional<C, FirstOr<typename Info::template Providers<C>, void>>{};
-            } else if constexpr (!std::is_invocable_v<F, C&>) {
-                return RunTargetNotCallable<F>{};
-            } else {
-                C& target = self.template getComponent<C>();
-                registry.start();
-                return (target.*fn)();
-            }
+            return callMember<typename MemberOf<F>::type, F>(self, registry, fn);
         } else if constexpr (std::is_invocable_v<Fn>) {
             registry.start();
             if constexpr (std::is_invocable_v<Fn, Self&>) {
@@ -213,6 +184,35 @@ protected:
             return std::forward<Fn>(fn)(self);
         } else {
             return RunNotCallable<Fn>{};
+        }
+    }
+    // C is a component, or an interface (Provides<C>). The diagnostics name template parameters,
+    // not local aliases, which MSVC would print by their own names.
+    template <class C, class F, class Self>
+    static decltype(auto) callMember([[maybe_unused]] Self& self, Registry& registry, [[maybe_unused]] F fn) {
+        constexpr std::size_t targets = wellFormed ? Info::template providerCount<C> : 1;
+        if constexpr (Info::template brokenCount<C> > 0) {
+            // A provider of C that can't be used as one, reported here or by compose<...>.
+            if constexpr (isPassed<typename Info::template RootBroken<C>>) {
+                return RunMistake{};
+            } else {
+                return RunTargetMistake<typename Info::template RootBroken<C>>{};
+            }
+        } else if constexpr (targets == 0) {
+            return RunTargetNotComposed<C, F>{};
+        } else if constexpr (targets > 1 && Info::template mixedProviders<C>) {
+            return RunTargetMistake<typename Info::template Mixed<C>>{};
+        } else if constexpr (targets > 1 && !Info::template chosenAtRuntime<C>) {
+            return RunTargetAmbiguous<C, typename Info::template Providers<C>>{};
+        } else if constexpr (!Info::template chosenAtRuntime<C> &&
+                             isConditional<FirstOr<typename Info::template Providers<C>, void>>) {
+            return RunTargetConditional<C, FirstOr<typename Info::template Providers<C>, void>>{};
+        } else if constexpr (!std::is_invocable_v<F, C&>) {
+            return RunTargetNotCallable<F>{};
+        } else {
+            C& target = self.template getComponent<C>();
+            registry.start();
+            return (target.*fn)();
         }
     }
 

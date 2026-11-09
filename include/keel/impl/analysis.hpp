@@ -43,7 +43,7 @@ struct ListInfo {
         if constexpr (earlier<I> == 1) {
             return Outcome<DuplicateComponent<C>>{};
         } else if constexpr (earlier<I> > 1) {
-            return Outcome<Passed<C, std::integral_constant<std::size_t, I>>>{};
+            return Outcome<Passed>{};
         } else if constexpr (!derivesFromComponent<C>) {
             return Outcome<NotAComponent<C>>{};
         } else if constexpr (hiddenBase<Conditional, C>) {
@@ -53,86 +53,61 @@ struct ListInfo {
         } else if constexpr (std::is_abstract_v<C>) {
             return Outcome<AbstractComponent<C>>{};
         } else {
-            return Outcome<Passed<C, std::integral_constant<std::size_t, I>>>{};
+            return Outcome<Passed>{};
         }
     }
     template <class C, std::size_t I>
     using Check = typename decltype(check<C, I>())::type;
 };
 
-// Each check is an outcome type: compose<...> derives from them (a failure's static_assert
-// fires), isValid<...> tests them (nothing is instantiated).
-
+// The outcomes, each Passed or a failure, in the order they are reported.
 template <class List, class Indices>
-struct ListDiagnosis;
+struct ListOutcomes;
 template <class... Cs, std::size_t... Is>
-struct ListDiagnosis<ListInfo<Cs...>, std::index_sequence<Is...>> : ListInfo<Cs...>::template Check<Cs, Is>... {};
-template <class List, class Indices>
-inline constexpr bool listPasses = false;
-template <class... Cs, std::size_t... Is>
-inline constexpr bool listPasses<ListInfo<Cs...>, std::index_sequence<Is...>> =
-    (isPassed<typename ListInfo<Cs...>::template Check<Cs, Is>> && ...);
+struct ListOutcomes<ListInfo<Cs...>, std::index_sequence<Is...>> {
+    using type = TypeList<typename ListInfo<Cs...>::template Check<Cs, Is>...>;
+};
 
-template <class Info, class C, class Entries = EntriesOf<C>>
-struct ComponentDiagnosis;
-// Checked per component, whatever refers to its interfaces. The tag is a type no entry can name,
-// so it never repeats an entry's Passed<C, Entry> base.
-struct AlternativeConditionalChecked {};
+// Checked per component, whatever refers to its interfaces.
 template <class C>
-using ConditionalCheck = std::conditional_t<std::is_base_of_v<AlternativeMarker, C> && !isConditional<C>,
-                                            AlternativeNotConditional<C>, Passed<C, AlternativeConditionalChecked>>;
-template <class Info, class C, class... Entries>
-struct ComponentDiagnosis<Info, C, TypeList<Entries...>> : ConditionalCheck<C>, Info::template Check<C, Entries>... {};
-template <class Info, class C, class Entries = EntriesOf<C>>
-inline constexpr bool entriesPass = false;
-template <class Info, class C, class... Entries>
-inline constexpr bool entriesPass<Info, C, TypeList<Entries...>> =
-    isPassed<ConditionalCheck<C>> && (isPassed<typename Info::template Check<C, Entries>> && ...);
+using ConditionalCheck =
+    std::conditional_t<std::is_base_of_v<AlternativeMarker, C> && !isConditional<C>, AlternativeNotConditional<C>,
+                       Passed>;
 
 // A list with a duplicate is not checked further: the duplicate is the one error.
-template <class Info, class C>
-using ComponentOutcome = std::conditional_t<uniqueEntriesOf<C>, ComponentDiagnosis<Info, C>,
-                                            ComponentListCheck<ComponentOf<C>>>;
-template <class Info, class C>
-inline constexpr bool componentPasses = uniqueEntriesOf<C> && entriesPass<Info, C>;
-
-// Only on a well-formed list (naming the checks reads each component's list); otherwise the
-// list's own check is the error.
+template <bool uniqueEntries, class Info, class C, class Entries = EntriesOf<C>>
+struct ComponentOutcomes {
+    using type = TypeList<ComponentListCheck<ComponentOf<C>>>;
+};
+template <class Info, class C, class... Entries>
+struct ComponentOutcomes<true, Info, C, TypeList<Entries...>> {
+    using type = TypeList<ConditionalCheck<C>, typename Info::template Check<C, Entries>...>;
+};
 template <class Info, class List>
-struct ComponentsDiagnosis;
+struct ComponentsOutcomes;
 template <class Info, class... Cs>
-struct ComponentsDiagnosis<Info, TypeList<Cs...>> : ComponentOutcome<Info, Cs>... {};
-template <bool wellFormed, class Info, class List>
-inline constexpr bool componentsPass = true;
-template <class Info, class... Cs>
-inline constexpr bool componentsPass<true, Info, TypeList<Cs...>> = (componentPasses<Info, Cs> && ...);
-
-template <class Repeated>
-struct BundleDiagnosis;
-template <class... Bundles>
-struct BundleDiagnosis<TypeList<Bundles...>> : DuplicateBundle<Bundles>... {};
+struct ComponentsOutcomes<Info, TypeList<Cs...>> {
+    using type = Concat<TypeList<>, typename ComponentOutcomes<uniqueEntriesOf<Cs>, Info, Cs>::type...>;
+};
 
 // The graph analysis runs only on a list of distinct, concrete components, so a list that
-// isn't one reports that and nothing else.
+// isn't one reports that and nothing else (naming the components' checks reads their lists).
 template <class Expansion>
 struct Analysis;
-template <class... Cs, class Repeated>
-struct Analysis<Expanded<TypeList<Cs...>, Repeated>> {
+template <class... Cs, class... Repeated>
+struct Analysis<Expanded<TypeList<Cs...>, TypeList<Repeated...>>> {
     using List = ListInfo<Cs...>;
-    using Indices = std::index_sequence_for<Cs...>;
-    static constexpr bool wellFormed = listPasses<List, Indices>;
-    using Info = Composition<std::conditional_t<wellFormed, TypeList<Cs...>, TypeList<>>>;
+    using OfList = typename ListOutcomes<List, std::index_sequence_for<Cs...>>::type;
+    static constexpr bool wellFormed = allPassed<OfList>;
+    using Components = std::conditional_t<wellFormed, TypeList<Cs...>, TypeList<>>;
+    using Info = Composition<Components>;
 
-    using OfBundles = BundleDiagnosis<Repeated>;
-    using OfList = ListDiagnosis<List, Indices>;
-    using OfComponents = std::conditional_t<wellFormed, ComponentsDiagnosis<Info, TypeList<Cs...>>, Passed<>>;
-    using NonEmpty = std::conditional_t<(sizeof...(Cs) > 0), Passed<>, EmptyComposition<>>;
-    using Acyclic = std::conditional_t<Info::acyclic, Passed<>, DependencyCycle<typename Info::Cycle>>;
-
-    // What keel::isValid<...> returns.
-    static constexpr bool ok = std::is_same_v<Repeated, TypeList<>> && wellFormed &&
-                               componentsPass<wellFormed, Info, TypeList<Cs...>> && isPassed<NonEmpty> &&
-                               isPassed<Acyclic>;
+    // compose<...> reports them (Report), keel::isValid<...> returns ok.
+    using Outcomes = Concat<TypeList<DuplicateBundle<Repeated>...>, OfList,
+                            typename ComponentsOutcomes<Info, Components>::type,
+                            TypeList<std::conditional_t<(sizeof...(Cs) > 0), Passed, EmptyComposition<>>,
+                                     std::conditional_t<Info::acyclic, Passed, DependencyCycle<typename Info::Cycle>>>>;
+    static constexpr bool ok = allPassed<Outcomes>;
 };
 
 }  // namespace detail

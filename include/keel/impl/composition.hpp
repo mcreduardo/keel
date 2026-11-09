@@ -170,7 +170,7 @@ struct Composition<TypeList<Cs...>> {
     template <class C, class T>
     static constexpr bool reportsBroken = first(dependents<T>) == index<C>;
     template <class T>
-    using RootBroken = std::conditional_t<(brokenCount<T> == 0 || dependentCount<T> > 0), Passed<T>, Broken<T>>;
+    using RootBroken = std::conditional_t<(brokenCount<T> == 0 || dependentCount<T> > 0), Passed, Broken<T>>;
 
     template <class C, class T>
     static constexpr Row others{(!std::is_same_v<C, Cs> && isProvider<T, Cs>)...};
@@ -185,10 +185,11 @@ struct Composition<TypeList<Cs...>> {
     template <class C, class T>
     using Derived = Keep<derived<C, T>>;
 
-    // Passed<...> if fine, else the named failure (diagnostics.hpp), wrapped in an Outcome<>.
-    template <class C, class Entry>
+    // Passed if fine, else the named failure (diagnostics.hpp), wrapped in an Outcome<>. The
+    // types a failure names are this function's template parameters, not local aliases: MSVC
+    // would print the aliases' names.
+    template <class C, class Entry, class T = typename Split<Entry>::target>
     static auto check() {
-        using T = typename Split<Entry>::target;
         constexpr Use use = Split<Entry>::use;
         constexpr bool collection = use == Use::all || use == Use::optionalAll;
         if constexpr (use == Use::listedAsync) {
@@ -209,42 +210,45 @@ struct Composition<TypeList<Cs...>> {
             if constexpr (reportsBroken<C, T>) {
                 return Outcome<Broken<T>>{};
             } else {
-                return Outcome<Passed<C, Entry>>{};
+                return Outcome<Passed>{};
             }
         } else if constexpr (providerCount<T> == 0 || collection) {
-            // For All<T>, a component that derives from T without providing it is the likely mistake.
-            using Subclass = FirstOr<Derived<C, T>, void>;
-            if constexpr (!std::is_void_v<Subclass>) {
-                if constexpr (collection) {
-                    return Outcome<LeftOutOfAll<C, T, Subclass>>{};
-                } else if constexpr (derivesFromComponent<T>) {
-                    return Outcome<UndeclaredSubclass<C, T, Subclass>>{};
-                } else {
-                    return Outcome<UndeclaredProvider<C, T, Subclass>>{};
-                }
-            } else if constexpr (use == Use::required) {
-                return Outcome<MissingDependency<C, T>>{};
-            } else if constexpr (use == Use::all && count(others<C, T>) == 0) {
-                return Outcome<MissingProvider<C, T>>{};
-            } else if constexpr (use == Use::all && count(unconditionalOthers<C, T>) == 0) {
-                return Outcome<OnlyConditionalProviders<C, T, Others<C, T>>>{};
-            } else {
-                return Outcome<Passed<C, Entry>>{};  // absent and optional or ordering only, or a collection
-            }
+            return checkAbsent<C, T, use>();
         } else if constexpr (providerCount<T> > 1 && use != Use::ordering && mixedProviders<T>) {
             return Outcome<Mixed<T>>{};
         } else if constexpr (providerCount<T> > 1 && use != Use::ordering && !chosenAtRuntime<T>) {
             return Outcome<AmbiguousDependency<C, T, Providers<T>>>{};
         } else if constexpr (use == Use::required && !chosenAtRuntime<T> &&
                              isConditional<FirstOr<Providers<T>, void>>) {
-            using Provider = FirstOr<Providers<T>, void>;
-            if constexpr (std::is_same_v<Provider, T>) {
+            if constexpr (std::is_same_v<FirstOr<Providers<T>, void>, T>) {
                 return Outcome<RequiredConditional<C, T>>{};
             } else {
-                return Outcome<RequiredConditionalProvider<C, T, Provider>>{};
+                return Outcome<RequiredConditionalProvider<C, T, FirstOr<Providers<T>, void>>>{};
             }
         } else {
-            return Outcome<Passed<C, Entry>>{};  // After<T> orders after every provider
+            return Outcome<Passed>{};  // After<T> orders after every provider
+        }
+    }
+    // No provider of T, or a collection. For All<T>, a component that derives from T without
+    // providing it is the likely mistake.
+    template <class C, class T, Use use, class Subclass = FirstOr<Derived<C, T>, void>>
+    static auto checkAbsent() {
+        if constexpr (!std::is_void_v<Subclass>) {
+            if constexpr (use == Use::all || use == Use::optionalAll) {
+                return Outcome<LeftOutOfAll<C, T, Subclass>>{};
+            } else if constexpr (derivesFromComponent<T>) {
+                return Outcome<UndeclaredSubclass<C, T, Subclass>>{};
+            } else {
+                return Outcome<UndeclaredProvider<C, T, Subclass>>{};
+            }
+        } else if constexpr (use == Use::required) {
+            return Outcome<MissingDependency<C, T>>{};
+        } else if constexpr (use == Use::all && count(others<C, T>) == 0) {
+            return Outcome<MissingProvider<C, T>>{};
+        } else if constexpr (use == Use::all && count(unconditionalOthers<C, T>) == 0) {
+            return Outcome<OnlyConditionalProviders<C, T, Others<C, T>>>{};
+        } else {
+            return Outcome<Passed>{};  // absent and optional or ordering only, or a collection
         }
     }
     template <class C, class Entry>

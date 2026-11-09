@@ -69,9 +69,9 @@ hello, Ada
 Remove `Config` from `compose<...>` and the program doesn't compile:
 
 ```
-error: static assertion failed due to requirement 'dependencyComposed<Greeter, Config>': keel: missing
-dependency: the Component in MissingDependency<Component, Dependency> needs Dependency, and no composed
-component is or provides it.
+error: static assertion failed due to requirement 'fixed<keel::detail::MissingDependency<Greeter, Config>>':
+keel: missing dependency: the Component in MissingDependency<Component, Dependency> needs Dependency, and
+no composed component is or provides it.
 ...
 hello.cpp:28:16: note: in instantiation of template class 'keel::App<Greeter>' requested here
 ```

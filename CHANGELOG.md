@@ -7,6 +7,12 @@ may change the API.
 
 ## Unreleased
 
+### Changed
+
+- Clang's first line of a compile-time diagnostic names the diagnostic with its types
+  (`requirement 'fixed<keel::detail::MissingDependency<Server, Logger>>'`) instead of a
+  per-diagnostic variable (`'dependencyComposed<Server, Logger>'`). Messages are unchanged.
+
 ### Fixed
 
 - A root `getComponent<I>()` of an alternative, or `start()`, called while `init()` is still

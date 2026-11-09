@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <exception>
 #include <initializer_list>
+#include <iterator>
 #include <mutex>
 #include <span>
 #include <stdexcept>
@@ -675,15 +676,64 @@ template <class T>
 inline constexpr bool derivesFromComponent = derivesFromComponentImpl<T>();
 
 // A failure is instantiated only if it is the mistake: one mistake, one error. compose<...>
-// derives from the outcomes, isValid<...> only tests isPassed<>, so the two can't disagree.
-// Each failure asserts a variable template that is false and read only when the check fails.
-template <class... Context>
+// instantiates the analysis's list of outcomes (Report), isValid<...> tests that each is Passed
+// (allPassed), so the two can't disagree. Each failure asserts fixed<itself>, false and read only
+// when the check fails.
 struct Passed {};
-
 template <class Outcome>
-inline constexpr bool isPassed = false;
-template <class... Context>
-inline constexpr bool isPassed<Passed<Context...>> = true;
+inline constexpr bool isPassed = std::is_same_v<Outcome, Passed>;
+template <class Failure>
+inline constexpr bool fixed = false;
+
+template <class... Outcomes>
+inline constexpr std::size_t failureCount = [] {  // a loop: Clang caps folds at 256 operands
+    constexpr bool passed[] = {true, isPassed<Outcomes>...};
+    std::size_t n = 0;
+    for (bool p : passed) n += p ? 0 : 1;
+    return n;
+}();
+template <class Outcomes>
+inline constexpr bool allPassed = false;
+template <class... Outcomes>
+inline constexpr bool allPassed<TypeList<Outcomes...>> = failureCount<Outcomes...> == 0;
+
+// Each failure is the base of its own slot, so a repeated one is no duplicate base.
+template <std::size_t I, class Failure>
+struct Reported : Failure {};
+template <class Failures, class Indices>
+struct ReportAll;
+template <class... Failures, std::size_t... Is>
+struct ReportAll<TypeList<Failures...>, std::index_sequence<Is...>> : Reported<Is, Failures>... {};
+
+// Only the failures, picked without recursion, so the notes name the mistakes, not every Passed.
+template <class... Outcomes>
+inline constexpr auto failureIndices = [] {
+    constexpr bool passed[] = {true, isPassed<Outcomes>...};  // passed[i + 1] is Outcomes[i]
+    std::array<std::size_t, failureCount<Outcomes...>> out{};
+    std::size_t n = 0;
+    for (std::size_t i = 1; i < std::size(passed); ++i) {
+        if (!passed[i]) out[n++] = i - 1;
+    }
+    return out;
+}();
+template <class Outcomes, class Indices = void>
+struct FailuresOf;
+template <class... Outcomes>
+struct FailuresOf<TypeList<Outcomes...>, void>
+    : FailuresOf<TypeList<Outcomes...>, std::make_index_sequence<failureCount<Outcomes...>>> {};
+template <class... Outcomes, std::size_t... Is>
+struct FailuresOf<TypeList<Outcomes...>, std::index_sequence<Is...>> {
+    using type = TypeList<std::tuple_element_t<failureIndices<Outcomes...>[Is], std::tuple<Outcomes...>>...>;
+};
+template <class Failures>
+struct ReportOf;
+template <class... Failures>
+struct ReportOf<TypeList<Failures...>> {
+    using type = ReportAll<TypeList<Failures...>, std::index_sequence_for<Failures...>>;
+};
+// What compose<...> instantiates: an alias, so the helpers above don't appear in the notes.
+template <class Outcomes>
+using Report = typename ReportOf<typename FailuresOf<Outcomes>::type>::type;
 
 // Carried as a type: returning the failure by value would instantiate it.
 template <class Result>
@@ -710,19 +760,15 @@ struct ComponentListCheck {
 };
 
 template <class Component, class Dependency>
-inline constexpr bool dependencyComposed = false;
-template <class Component, class Dependency>
 struct MissingDependency {
-    static_assert(dependencyComposed<Component, Dependency>,
+    static_assert(fixed<MissingDependency>,
                   "keel: missing dependency: the Component in MissingDependency<Component, Dependency> needs "
                   "Dependency, and no composed component is or provides it.");
 };
 
 template <class Component, class Interface, class Providers>
-inline constexpr bool singleProvider = false;
-template <class Component, class Interface, class Providers>
 struct AmbiguousDependency {
-    static_assert(singleProvider<Component, Interface, Providers>,
+    static_assert(fixed<AmbiguousDependency>,
                   "keel: ambiguous dependency: the Component in AmbiguousDependency<Component, Interface, "
                   "TypeList<Providers...>> needs one Interface, and each of the Providers is or provides it. "
                   "Compose only one of them, depend on the one you want by its own type, depend on "
@@ -732,10 +778,8 @@ struct AmbiguousDependency {
 };
 
 template <class Interface, class Provides, class Alternatives>
-inline constexpr bool unmixedProviders = false;
-template <class Interface, class Provides, class Alternatives>
 struct MixedProviders {
-    static_assert(unmixedProviders<Interface, Provides, Alternatives>,
+    static_assert(fixed<MixedProviders>,
                   "keel: something needs one Interface, and its providers in MixedProviders<Interface, "
                   "TypeList<Provides...>, TypeList<Alternatives...>> are mixed: the Provides are Interface or derive "
                   "from keel::Provides<Interface>, the Alternatives derive from keel::Alternative<Interface>. "
@@ -744,10 +788,8 @@ struct MixedProviders {
 };
 
 template <class Component, class Interface>
-inline constexpr bool anyProvider = false;
-template <class Component, class Interface>
 struct MissingProvider {
-    static_assert(anyProvider<Component, Interface>,
+    static_assert(fixed<MissingProvider>,
                   "keel: the Component in MissingProvider<Component, Interface> lists keel::All<Interface>, which "
                   "needs at least one provider, and no composed component (other than Component itself) is or "
                   "provides Interface. Compose one, or depend on keel::Optional<keel::All<Interface>> if none is "
@@ -755,10 +797,8 @@ struct MissingProvider {
 };
 
 template <class Component, class Interface, class Providers>
-inline constexpr bool unconditionalProvider = false;
-template <class Component, class Interface, class Providers>
 struct OnlyConditionalProviders {
-    static_assert(unconditionalProvider<Component, Interface, Providers>,
+    static_assert(fixed<OnlyConditionalProviders>,
                   "keel: the Component in OnlyConditionalProviders<Component, Interface, TypeList<Providers...>> "
                   "lists keel::All<Interface>, which is never empty, and each of the Providers of Interface is a "
                   "keel::Conditional that configuration may turn off. Depend on "
@@ -767,10 +807,8 @@ struct OnlyConditionalProviders {
 };
 
 template <class Component, class T>
-inline constexpr bool unconditionalDependency = false;
-template <class Component, class T>
 struct RequiredConditional {
-    static_assert(unconditionalDependency<Component, T>,
+    static_assert(fixed<RequiredConditional>,
                   "keel: the Component in RequiredConditional<Component, T> requires T, and T is a "
                   "keel::Conditional that configuration may turn off. Depend on keel::Optional<T> instead, and "
                   "use findComponent<T>(), which returns nullptr while T is disabled (or keel::After<T> for "
@@ -778,10 +816,8 @@ struct RequiredConditional {
 };
 
 template <class Component, class Interface, class Provider>
-inline constexpr bool unconditionalInterface = false;
-template <class Component, class Interface, class Provider>
 struct RequiredConditionalProvider {
-    static_assert(unconditionalInterface<Component, Interface, Provider>,
+    static_assert(fixed<RequiredConditionalProvider>,
                   "keel: the Component in RequiredConditionalProvider<Component, Interface, Provider> requires "
                   "Interface, and its one provider, Provider, is a keel::Conditional that configuration may turn "
                   "off. Depend on keel::Optional<Interface> instead, or compose a provider that is always there "
@@ -790,10 +826,8 @@ struct RequiredConditionalProvider {
 };
 
 template <class Component>
-inline constexpr bool conditionalAlternative = false;
-template <class Component>
 struct AlternativeNotConditional {
-    static_assert(conditionalAlternative<Component>,
+    static_assert(fixed<AlternativeNotConditional>,
                   "keel: the Component in AlternativeNotConditional<Component> derives from keel::Alternative<I>, "
                   "so configuration decides whether it is the one, but it doesn't derive from keel::Conditional. "
                   "Derive from keel::Conditional publicly and override `bool enabled() const`, or derive from "
@@ -801,10 +835,8 @@ struct AlternativeNotConditional {
 };
 
 template <class Component, class Interface>
-inline constexpr bool providesOrAlternative = false;
-template <class Component, class Interface>
 struct ProvidesAndAlternative {
-    static_assert(providesOrAlternative<Component, Interface>,
+    static_assert(fixed<ProvidesAndAlternative>,
                   "keel: the Component in ProvidesAndAlternative<Component, Interface> derives from "
                   "keel::Provides<Interface> and from keel::Alternative<Interface>. Keep one: "
                   "keel::Alternative<Interface> if configuration chooses it among other implementations, "
@@ -812,20 +844,16 @@ struct ProvidesAndAlternative {
 };
 
 template <class Component, class Interface>
-inline constexpr bool wellNestedAll = false;
-template <class Component, class Interface>
 struct MisnestedAll {
-    static_assert(wellNestedAll<Component, Interface>,
+    static_assert(fixed<MisnestedAll>,
                   "keel: the Component in MisnestedAll<Component, Interface> lists "
                   "keel::All<keel::Optional<Interface>>; write keel::Optional<keel::All<Interface>> for a list "
                   "that may be empty");
 };
 
 template <class Component, class T, class Derived>
-inline constexpr bool providerDeclared = false;
-template <class Component, class T, class Derived>
 struct UndeclaredProvider {
-    static_assert(providerDeclared<Component, T, Derived>,
+    static_assert(fixed<UndeclaredProvider>,
                   "keel: the Component in UndeclaredProvider<Component, T, Derived> depends on T, nothing "
                   "composed is or provides T, and Derived derives from T without deriving from keel::Provides<T>. "
                   "Dependencies match by exact type: derive Derived from keel::Provides<T> too (publicly), or "
@@ -833,20 +861,16 @@ struct UndeclaredProvider {
 };
 
 template <class Component, class T, class Derived>
-inline constexpr bool subclassDeclared = false;
-template <class Component, class T, class Derived>
 struct UndeclaredSubclass {
-    static_assert(subclassDeclared<Component, T, Derived>,
+    static_assert(fixed<UndeclaredSubclass>,
                   "keel: the Component in UndeclaredSubclass<Component, T, Derived> depends on T, which isn't "
                   "composed. Derived is a subclass of the component T, but keel matches exact types: compose T "
                   "itself, or derive T from keel::Provides<T> (publicly) so its subclasses provide T.");
 };
 
 template <class Component, class T, class Derived>
-inline constexpr bool providerListed = false;
-template <class Component, class T, class Derived>
 struct LeftOutOfAll {
-    static_assert(providerListed<Component, T, Derived>,
+    static_assert(fixed<LeftOutOfAll>,
                   "keel: the Component in LeftOutOfAll<Component, T, Derived> lists keel::All<T> (or "
                   "keel::Optional<keel::All<T>>), and Derived derives from T but would be left out: keel matches "
                   "exact types. Derive Derived from keel::Provides<T> too (for a subclass of the component T, "
@@ -854,20 +878,16 @@ struct LeftOutOfAll {
 };
 
 template <class Component, class Interface>
-inline constexpr bool derivesFromInterface = false;
-template <class Component, class Interface>
 struct NotDerivedFromInterface {
-    static_assert(derivesFromInterface<Component, Interface>,
+    static_assert(fixed<NotDerivedFromInterface>,
                   "keel: the Component in NotDerivedFromInterface<Component, Interface> derives from "
                   "keel::Provides<Interface> (or keel::Alternative<Interface>) but doesn't derive from "
                   "Interface publicly and unambiguously (or Interface isn't defined at this point)");
 };
 
 template <class Component, class Interface>
-inline constexpr bool accessibleProvides = false;
-template <class Component, class Interface>
 struct InaccessibleProvides {
-    static_assert(accessibleProvides<Component, Interface>,
+    static_assert(fixed<InaccessibleProvides>,
                   "keel: the Component in InaccessibleProvides<Component, Interface> derives from "
                   "keel::Provides<Interface> privately, protectedly or more than once, so keel can't see that it "
                   "provides Interface. Derive from keel::Provides<Interface> publicly, once (a subclass of a "
@@ -876,10 +896,8 @@ struct InaccessibleProvides {
 };
 
 template <class Component, class Interface>
-inline constexpr bool accessibleAlternative = false;
-template <class Component, class Interface>
 struct InaccessibleAlternative {
-    static_assert(accessibleAlternative<Component, Interface>,
+    static_assert(fixed<InaccessibleAlternative>,
                   "keel: the Component in InaccessibleAlternative<Component, Interface> derives from "
                   "keel::Alternative<Interface> privately, protectedly or more than once, so keel can't see that it "
                   "is an alternative of Interface. Derive from keel::Alternative<Interface> publicly, once: class C "
@@ -888,10 +906,8 @@ struct InaccessibleAlternative {
 };
 
 template <class Component, class Interface>
-inline constexpr bool notListedAlternative = false;
-template <class Component, class Interface>
 struct AlternativeAsDependency {
-    static_assert(notListedAlternative<Component, Interface>,
+    static_assert(fixed<AlternativeAsDependency>,
                   "keel: the Component in AlternativeAsDependency<Component, Interface> lists "
                   "keel::Alternative<Interface> in its keel::Component<...>, which lists only what the component "
                   "needs. Inherit it instead, next to keel::Component<...>: class Component : public "
@@ -900,10 +916,8 @@ struct AlternativeAsDependency {
 };
 
 template <class Component, class Interface>
-inline constexpr bool notListedProvides = false;
-template <class Component, class Interface>
 struct ProvidesAsDependency {
-    static_assert(notListedProvides<Component, Interface>,
+    static_assert(fixed<ProvidesAsDependency>,
                   "keel: the Component in ProvidesAsDependency<Component, Interface> lists keel::Provides<Interface> "
                   "in its keel::Component<...>, which lists only what the component needs. Inherit it instead, next "
                   "to keel::Component<...>: class Component : public keel::Component<...>, public "
@@ -915,10 +929,8 @@ template <class... Failures>
 struct ProviderFailures : Failures... {};
 
 template <class Component, class Entry>
-inline constexpr bool validEntry = false;
-template <class Component, class Entry>
 struct InvalidDependency {
-    static_assert(validEntry<Component, Entry>,
+    static_assert(fixed<InvalidDependency>,
                   "keel: the Component in InvalidDependency<Component, Entry> lists Entry (T, keel::Optional<T>, "
                   "keel::After<T> or keel::All<T>), and T can never be a component or an interface: T must be "
                   "a class type, not a reference, not const/volatile, and not itself keel::Optional, "
@@ -926,20 +938,16 @@ struct InvalidDependency {
 };
 
 template <class Component, class Entry>
-inline constexpr bool asyncMarkerOnItsOwn = false;
-template <class Component, class Entry>
 struct MisplacedAsync {
-    static_assert(asyncMarkerOnItsOwn<Component, Entry>,
+    static_assert(fixed<MisplacedAsync>,
                   "keel: the Component in MisplacedAsync<Component, Entry> lists keel::AsyncInit or "
                   "keel::AsyncStart inside Entry. They aren't dependencies but base classes: class C : public "
                   "keel::Component<Config>, public keel::AsyncInit");
 };
 
 template <class Component, class Marker>
-inline constexpr bool asyncNotListed = false;
-template <class Component, class Marker>
 struct AsyncAsDependency {
-    static_assert(asyncNotListed<Component, Marker>,
+    static_assert(fixed<AsyncAsDependency>,
                   "keel: the Component in AsyncAsDependency<Component, Marker> lists the Marker (keel::AsyncInit or "
                   "keel::AsyncStart) in its keel::Component<...>, which lists only dependencies. Inherit it "
                   "instead, next to keel::Component<...>: class Component : public keel::Component<...>, public "
@@ -947,80 +955,65 @@ struct AsyncAsDependency {
 };
 
 template <class Component, class Bundle>
-inline constexpr bool notABundle = false;
-template <class Component, class Bundle>
 struct BundleAsDependency {
-    static_assert(notABundle<Component, Bundle>,
+    static_assert(fixed<BundleAsDependency>,
                   "keel: the Component in BundleAsDependency<Component, Bundle> lists a keel::Bundle<...> in its "
                   "keel::Component<...> (as T, keel::Optional<T>, keel::After<T>, ...). Bundles only group "
                   "components for compose<...>: list the components you use, each on its own.");
 };
 
 template <class Bundle>
-inline constexpr bool bundleOnce = false;
-template <class Bundle>
 struct DuplicateBundle {
-    static_assert(bundleOnce<Bundle>,
+    static_assert(fixed<DuplicateBundle>,
                   "keel: the Bundle in DuplicateBundle<Bundle> is reached more than once in compose<...> (listed "
                   "twice, or also inside another bundle). List it once.");
 };
 
 template <class Cycle>
-inline constexpr bool acyclic = false;
-template <class Cycle>
 struct DependencyCycle {
-    static_assert(acyclic<Cycle>, "keel: dependency cycle among the components in DependencyCycle<TypeList<...>>");
+    static_assert(fixed<DependencyCycle>,
+                  "keel: dependency cycle among the components in DependencyCycle<TypeList<...>>");
 };
 
 template <class T>
-inline constexpr bool isComponentType = false;
-template <class T>
 struct NotAComponent {
-    static_assert(isComponentType<T>,
+    static_assert(fixed<NotAComponent>,
                   "keel: the T in NotAComponent<T> is in compose<...> but doesn't derive publicly, and once, "
                   "from keel::Component<...> (or isn't defined at this point). A keel::Bundle<...> is expanded "
                   "only when listed as is: not const, and not through a class derived from it");
 };
 
 template <class T>
-inline constexpr bool listedOnce = false;
-template <class T>
 struct DuplicateComponent {
-    static_assert(listedOnce<T>,
+    static_assert(fixed<DuplicateComponent>,
                   "keel: the T in DuplicateComponent<T> is listed more than once in compose<...> (counting the "
                   "components of each keel::Bundle<...>: two bundles may both contain T)");
 };
 
 template <class T>
-inline constexpr bool concreteType = false;
-template <class T>
 struct AbstractComponent {
-    static_assert(concreteType<T>,
+    static_assert(fixed<AbstractComponent>,
                   "keel: the T in AbstractComponent<T> is abstract: compose concrete components. (A "
                   "keel::Conditional must override `bool enabled() const`, const included.)");
 };
 
 template <class T>
-inline constexpr bool accessibleConditional = false;
-template <class T>
 struct InaccessibleConditional {
-    static_assert(accessibleConditional<T>,
+    static_assert(fixed<InaccessibleConditional>,
                   "keel: the T in InaccessibleConditional<T> derives from keel::Conditional privately, protectedly "
                   "or more than once, so keel can't ask its enabled(). Derive from keel::Conditional publicly, "
                   "once.");
 };
 
-// The empty pack only makes the assertion depend on a template argument.
+// A template only so that the assertion is dependent.
 template <class... None>
 struct EmptyComposition {
-    static_assert(sizeof...(None) > 0, "keel: compose<...> needs at least one component");
+    static_assert(fixed<EmptyComposition>, "keel: compose<...> needs at least one component");
 };
 
 template <class T>
-inline constexpr bool accessibleAsync = false;
-template <class T>
 struct InaccessibleAsync {
-    static_assert(accessibleAsync<T>,
+    static_assert(fixed<InaccessibleAsync>,
                   "keel: the T in InaccessibleAsync<T> derives from keel::AsyncInit or keel::AsyncStart privately, "
                   "protectedly or more than once, so keel can't see it. Derive from it publicly, once: class C : "
                   "public keel::Component<...>, public keel::AsyncInit");
@@ -1053,14 +1046,14 @@ struct RunMistake {
 
 template <class T>
 struct NotInApp {
-    static_assert(alwaysFalse<T>,
+    static_assert(fixed<NotInApp>,
                   "keel: getComponent<T>(): the T in NotInApp<T> is neither a component of this App nor provided "
                   "by one. Keel matches exact types: a component that derives from T must also derive from "
                   "keel::Provides<T> (for a subclass of a component T, T itself must)");
 };
 template <class Interface, class Providers>
 struct AmbiguousInterface {
-    static_assert(alwaysFalse<Interface>,
+    static_assert(fixed<AmbiguousInterface>,
                   "keel: getComponent<I>(): each of the Providers in AmbiguousInterface<I, TypeList<Providers...>> "
                   "provides I: get a specific one by its own type (if I itself is one of them, compose only one), "
                   "or make each of them a keel::Alternative<I> and a keel::Conditional");
@@ -1068,7 +1061,7 @@ struct AmbiguousInterface {
 
 template <class C, class MemberFunction>
 struct RunTargetNotComposed : RunMistake {
-    static_assert(alwaysFalse<C>,
+    static_assert(fixed<RunTargetNotComposed>,
                   "keel: run(&C::f) calls f on the component C (or on the one component that provides C), and "
                   "the C in RunTargetNotComposed<C, F> is neither in this App's compose<...> list nor provided by "
                   "one of its components. Keel matches exact types, and a member function inherited from a base "
@@ -1077,7 +1070,7 @@ struct RunTargetNotComposed : RunMistake {
 };
 template <class Interface, class Providers>
 struct RunTargetAmbiguous : RunMistake {
-    static_assert(alwaysFalse<Interface>,
+    static_assert(fixed<RunTargetAmbiguous>,
                   "keel: run(&I::f) calls f on the one component that provides I, and each of the Providers in "
                   "RunTargetAmbiguous<I, TypeList<Providers...>> provides it: call it from a lambda on the one "
                   "you want, or make each of them a keel::Alternative<I> and a keel::Conditional");
@@ -1087,7 +1080,7 @@ template <class Mistake>
 struct RunTargetMistake : RunMistake, Mistake {};
 template <class C, class Provider>
 struct RunTargetConditional : RunMistake {
-    static_assert(alwaysFalse<C>,
+    static_assert(fixed<RunTargetConditional>,
                   "keel: run(&C::f) calls f on the one component that is or provides C, and the Provider in "
                   "RunTargetConditional<C, Provider> is a keel::Conditional that configuration may turn off. "
                   "Call it from a lambda that checks first (app.getComponent<C>() throws keel::Error while it "
@@ -1095,19 +1088,20 @@ struct RunTargetConditional : RunMistake {
 };
 template <class MemberFunction>
 struct RunTargetNotCallable : RunMistake {
-    static_assert(alwaysFalse<MemberFunction>,
+    static_assert(fixed<RunTargetNotCallable>,
                   "keel: run(&C::f) calls f on the component (an lvalue C&) with no arguments, and the F in "
                   "RunTargetNotCallable<F> can't be called that way");
 };
 template <class Fn>
 struct RunNotCallable : RunMistake {
-    static_assert(alwaysFalse<Fn>,
+    static_assert(fixed<RunNotCallable>,
                   "keel: run(fn) needs fn callable with no arguments or with the App (App&), or a member function "
                   "of a component (&C::f); the Fn in RunNotCallable<Fn> is neither");
 };
 template <class T>
 struct NotAnApp : RunMistake {
-    static_assert(alwaysFalse<T>, "keel: keel::run<AppType>(...) needs a keel::App<...>; the T in NotAnApp<T> isn't one");
+    static_assert(fixed<NotAnApp>,
+                  "keel: keel::run<AppType>(...) needs a keel::App<...>; the T in NotAnApp<T> isn't one");
 };
 
 // graph[i][j]: component i depends on component j.
@@ -1352,7 +1346,7 @@ struct Composition<TypeList<Cs...>> {
     template <class C, class T>
     static constexpr bool reportsBroken = first(dependents<T>) == index<C>;
     template <class T>
-    using RootBroken = std::conditional_t<(brokenCount<T> == 0 || dependentCount<T> > 0), Passed<T>, Broken<T>>;
+    using RootBroken = std::conditional_t<(brokenCount<T> == 0 || dependentCount<T> > 0), Passed, Broken<T>>;
 
     template <class C, class T>
     static constexpr Row others{(!std::is_same_v<C, Cs> && isProvider<T, Cs>)...};
@@ -1367,10 +1361,11 @@ struct Composition<TypeList<Cs...>> {
     template <class C, class T>
     using Derived = Keep<derived<C, T>>;
 
-    // Passed<...> if fine, else the named failure (diagnostics.hpp), wrapped in an Outcome<>.
-    template <class C, class Entry>
+    // Passed if fine, else the named failure (diagnostics.hpp), wrapped in an Outcome<>. The
+    // types a failure names are this function's template parameters, not local aliases: MSVC
+    // would print the aliases' names.
+    template <class C, class Entry, class T = typename Split<Entry>::target>
     static auto check() {
-        using T = typename Split<Entry>::target;
         constexpr Use use = Split<Entry>::use;
         constexpr bool collection = use == Use::all || use == Use::optionalAll;
         if constexpr (use == Use::listedAsync) {
@@ -1391,42 +1386,45 @@ struct Composition<TypeList<Cs...>> {
             if constexpr (reportsBroken<C, T>) {
                 return Outcome<Broken<T>>{};
             } else {
-                return Outcome<Passed<C, Entry>>{};
+                return Outcome<Passed>{};
             }
         } else if constexpr (providerCount<T> == 0 || collection) {
-            // For All<T>, a component that derives from T without providing it is the likely mistake.
-            using Subclass = FirstOr<Derived<C, T>, void>;
-            if constexpr (!std::is_void_v<Subclass>) {
-                if constexpr (collection) {
-                    return Outcome<LeftOutOfAll<C, T, Subclass>>{};
-                } else if constexpr (derivesFromComponent<T>) {
-                    return Outcome<UndeclaredSubclass<C, T, Subclass>>{};
-                } else {
-                    return Outcome<UndeclaredProvider<C, T, Subclass>>{};
-                }
-            } else if constexpr (use == Use::required) {
-                return Outcome<MissingDependency<C, T>>{};
-            } else if constexpr (use == Use::all && count(others<C, T>) == 0) {
-                return Outcome<MissingProvider<C, T>>{};
-            } else if constexpr (use == Use::all && count(unconditionalOthers<C, T>) == 0) {
-                return Outcome<OnlyConditionalProviders<C, T, Others<C, T>>>{};
-            } else {
-                return Outcome<Passed<C, Entry>>{};  // absent and optional or ordering only, or a collection
-            }
+            return checkAbsent<C, T, use>();
         } else if constexpr (providerCount<T> > 1 && use != Use::ordering && mixedProviders<T>) {
             return Outcome<Mixed<T>>{};
         } else if constexpr (providerCount<T> > 1 && use != Use::ordering && !chosenAtRuntime<T>) {
             return Outcome<AmbiguousDependency<C, T, Providers<T>>>{};
         } else if constexpr (use == Use::required && !chosenAtRuntime<T> &&
                              isConditional<FirstOr<Providers<T>, void>>) {
-            using Provider = FirstOr<Providers<T>, void>;
-            if constexpr (std::is_same_v<Provider, T>) {
+            if constexpr (std::is_same_v<FirstOr<Providers<T>, void>, T>) {
                 return Outcome<RequiredConditional<C, T>>{};
             } else {
-                return Outcome<RequiredConditionalProvider<C, T, Provider>>{};
+                return Outcome<RequiredConditionalProvider<C, T, FirstOr<Providers<T>, void>>>{};
             }
         } else {
-            return Outcome<Passed<C, Entry>>{};  // After<T> orders after every provider
+            return Outcome<Passed>{};  // After<T> orders after every provider
+        }
+    }
+    // No provider of T, or a collection. For All<T>, a component that derives from T without
+    // providing it is the likely mistake.
+    template <class C, class T, Use use, class Subclass = FirstOr<Derived<C, T>, void>>
+    static auto checkAbsent() {
+        if constexpr (!std::is_void_v<Subclass>) {
+            if constexpr (use == Use::all || use == Use::optionalAll) {
+                return Outcome<LeftOutOfAll<C, T, Subclass>>{};
+            } else if constexpr (derivesFromComponent<T>) {
+                return Outcome<UndeclaredSubclass<C, T, Subclass>>{};
+            } else {
+                return Outcome<UndeclaredProvider<C, T, Subclass>>{};
+            }
+        } else if constexpr (use == Use::required) {
+            return Outcome<MissingDependency<C, T>>{};
+        } else if constexpr (use == Use::all && count(others<C, T>) == 0) {
+            return Outcome<MissingProvider<C, T>>{};
+        } else if constexpr (use == Use::all && count(unconditionalOthers<C, T>) == 0) {
+            return Outcome<OnlyConditionalProviders<C, T, Others<C, T>>>{};
+        } else {
+            return Outcome<Passed>{};  // absent and optional or ordering only, or a collection
         }
     }
     template <class C, class Entry>
@@ -1491,7 +1489,7 @@ struct ListInfo {
         if constexpr (earlier<I> == 1) {
             return Outcome<DuplicateComponent<C>>{};
         } else if constexpr (earlier<I> > 1) {
-            return Outcome<Passed<C, std::integral_constant<std::size_t, I>>>{};
+            return Outcome<Passed>{};
         } else if constexpr (!derivesFromComponent<C>) {
             return Outcome<NotAComponent<C>>{};
         } else if constexpr (hiddenBase<Conditional, C>) {
@@ -1501,86 +1499,61 @@ struct ListInfo {
         } else if constexpr (std::is_abstract_v<C>) {
             return Outcome<AbstractComponent<C>>{};
         } else {
-            return Outcome<Passed<C, std::integral_constant<std::size_t, I>>>{};
+            return Outcome<Passed>{};
         }
     }
     template <class C, std::size_t I>
     using Check = typename decltype(check<C, I>())::type;
 };
 
-// Each check is an outcome type: compose<...> derives from them (a failure's static_assert
-// fires), isValid<...> tests them (nothing is instantiated).
-
+// The outcomes, each Passed or a failure, in the order they are reported.
 template <class List, class Indices>
-struct ListDiagnosis;
+struct ListOutcomes;
 template <class... Cs, std::size_t... Is>
-struct ListDiagnosis<ListInfo<Cs...>, std::index_sequence<Is...>> : ListInfo<Cs...>::template Check<Cs, Is>... {};
-template <class List, class Indices>
-inline constexpr bool listPasses = false;
-template <class... Cs, std::size_t... Is>
-inline constexpr bool listPasses<ListInfo<Cs...>, std::index_sequence<Is...>> =
-    (isPassed<typename ListInfo<Cs...>::template Check<Cs, Is>> && ...);
+struct ListOutcomes<ListInfo<Cs...>, std::index_sequence<Is...>> {
+    using type = TypeList<typename ListInfo<Cs...>::template Check<Cs, Is>...>;
+};
 
-template <class Info, class C, class Entries = EntriesOf<C>>
-struct ComponentDiagnosis;
-// Checked per component, whatever refers to its interfaces. The tag is a type no entry can name,
-// so it never repeats an entry's Passed<C, Entry> base.
-struct AlternativeConditionalChecked {};
+// Checked per component, whatever refers to its interfaces.
 template <class C>
-using ConditionalCheck = std::conditional_t<std::is_base_of_v<AlternativeMarker, C> && !isConditional<C>,
-                                            AlternativeNotConditional<C>, Passed<C, AlternativeConditionalChecked>>;
-template <class Info, class C, class... Entries>
-struct ComponentDiagnosis<Info, C, TypeList<Entries...>> : ConditionalCheck<C>, Info::template Check<C, Entries>... {};
-template <class Info, class C, class Entries = EntriesOf<C>>
-inline constexpr bool entriesPass = false;
-template <class Info, class C, class... Entries>
-inline constexpr bool entriesPass<Info, C, TypeList<Entries...>> =
-    isPassed<ConditionalCheck<C>> && (isPassed<typename Info::template Check<C, Entries>> && ...);
+using ConditionalCheck =
+    std::conditional_t<std::is_base_of_v<AlternativeMarker, C> && !isConditional<C>, AlternativeNotConditional<C>,
+                       Passed>;
 
 // A list with a duplicate is not checked further: the duplicate is the one error.
-template <class Info, class C>
-using ComponentOutcome = std::conditional_t<uniqueEntriesOf<C>, ComponentDiagnosis<Info, C>,
-                                            ComponentListCheck<ComponentOf<C>>>;
-template <class Info, class C>
-inline constexpr bool componentPasses = uniqueEntriesOf<C> && entriesPass<Info, C>;
-
-// Only on a well-formed list (naming the checks reads each component's list); otherwise the
-// list's own check is the error.
+template <bool uniqueEntries, class Info, class C, class Entries = EntriesOf<C>>
+struct ComponentOutcomes {
+    using type = TypeList<ComponentListCheck<ComponentOf<C>>>;
+};
+template <class Info, class C, class... Entries>
+struct ComponentOutcomes<true, Info, C, TypeList<Entries...>> {
+    using type = TypeList<ConditionalCheck<C>, typename Info::template Check<C, Entries>...>;
+};
 template <class Info, class List>
-struct ComponentsDiagnosis;
+struct ComponentsOutcomes;
 template <class Info, class... Cs>
-struct ComponentsDiagnosis<Info, TypeList<Cs...>> : ComponentOutcome<Info, Cs>... {};
-template <bool wellFormed, class Info, class List>
-inline constexpr bool componentsPass = true;
-template <class Info, class... Cs>
-inline constexpr bool componentsPass<true, Info, TypeList<Cs...>> = (componentPasses<Info, Cs> && ...);
-
-template <class Repeated>
-struct BundleDiagnosis;
-template <class... Bundles>
-struct BundleDiagnosis<TypeList<Bundles...>> : DuplicateBundle<Bundles>... {};
+struct ComponentsOutcomes<Info, TypeList<Cs...>> {
+    using type = Concat<TypeList<>, typename ComponentOutcomes<uniqueEntriesOf<Cs>, Info, Cs>::type...>;
+};
 
 // The graph analysis runs only on a list of distinct, concrete components, so a list that
-// isn't one reports that and nothing else.
+// isn't one reports that and nothing else (naming the components' checks reads their lists).
 template <class Expansion>
 struct Analysis;
-template <class... Cs, class Repeated>
-struct Analysis<Expanded<TypeList<Cs...>, Repeated>> {
+template <class... Cs, class... Repeated>
+struct Analysis<Expanded<TypeList<Cs...>, TypeList<Repeated...>>> {
     using List = ListInfo<Cs...>;
-    using Indices = std::index_sequence_for<Cs...>;
-    static constexpr bool wellFormed = listPasses<List, Indices>;
-    using Info = Composition<std::conditional_t<wellFormed, TypeList<Cs...>, TypeList<>>>;
+    using OfList = typename ListOutcomes<List, std::index_sequence_for<Cs...>>::type;
+    static constexpr bool wellFormed = allPassed<OfList>;
+    using Components = std::conditional_t<wellFormed, TypeList<Cs...>, TypeList<>>;
+    using Info = Composition<Components>;
 
-    using OfBundles = BundleDiagnosis<Repeated>;
-    using OfList = ListDiagnosis<List, Indices>;
-    using OfComponents = std::conditional_t<wellFormed, ComponentsDiagnosis<Info, TypeList<Cs...>>, Passed<>>;
-    using NonEmpty = std::conditional_t<(sizeof...(Cs) > 0), Passed<>, EmptyComposition<>>;
-    using Acyclic = std::conditional_t<Info::acyclic, Passed<>, DependencyCycle<typename Info::Cycle>>;
-
-    // What keel::isValid<...> returns.
-    static constexpr bool ok = std::is_same_v<Repeated, TypeList<>> && wellFormed &&
-                               componentsPass<wellFormed, Info, TypeList<Cs...>> && isPassed<NonEmpty> &&
-                               isPassed<Acyclic>;
+    // compose<...> reports them (Report), keel::isValid<...> returns ok.
+    using Outcomes = Concat<TypeList<DuplicateBundle<Repeated>...>, OfList,
+                            typename ComponentsOutcomes<Info, Components>::type,
+                            TypeList<std::conditional_t<(sizeof...(Cs) > 0), Passed, EmptyComposition<>>,
+                                     std::conditional_t<Info::acyclic, Passed, DependencyCycle<typename Info::Cycle>>>>;
+    static constexpr bool ok = allPassed<Outcomes>;
 };
 
 class Registry {
@@ -2161,11 +2134,7 @@ class AppImpl<Expanded<TypeList<Cs...>, Repeated>> {
     static constexpr bool wellFormed = Checks::wellFormed;
     using Info = typename Checks::Info;
 
-    static_assert(sizeof(typename Checks::OfBundles) > 0);     // names a bundle reached twice
-    static_assert(sizeof(typename Checks::OfList) > 0);        // names a non-component or a duplicate
-    static_assert(sizeof(typename Checks::OfComponents) > 0);  // names missing dependencies, ...
-    static_assert(sizeof(typename Checks::NonEmpty) > 0);
-    static_assert(sizeof(typename Checks::Acyclic) > 0);
+    static_assert(sizeof(Report<typename Checks::Outcomes>) > 0);
 
 public:
     template <class... Args>
@@ -2203,15 +2172,15 @@ public:
         using Provider = FirstOr<Providers, void>;
         // One mistake, one error: an invalid compose<...> list is reported there, not here.
         using Diagnosis = std::conditional_t<
-            !wellFormed, Passed<T>,
+            !wellFormed, Passed,
             std::conditional_t<
                 (Info::template brokenCount<T> > 0), typename Info::template RootBroken<T>,
                 std::conditional_t<
-                    providers == 1 || chosenAtRuntime, Passed<T>,
-                    std::conditional_t<providers == 0, NotInApp<T>,
-                                       std::conditional_t<Info::template mixedProviders<T>,
-                                                          typename Info::template Mixed<T>,
-                                                          AmbiguousInterface<T, Providers>>>>>>;
+                    providers == 1 || chosenAtRuntime, Passed,
+                    std::conditional_t<
+                        providers == 0, NotInApp<T>,
+                        std::conditional_t<Info::template mixedProviders<T>, typename Info::template Mixed<T>,
+                                           AmbiguousInterface<T, typename Info::template Providers<T>>>>>>>;
         static_assert(sizeof(Diagnosis) > 0);
         if constexpr ((providers == 1 || chosenAtRuntime) && implements<Provider, T>()) {  // else an error above
             // Built here (T may have no bindings), on the stack so the lookup doesn't allocate.
@@ -2261,32 +2230,7 @@ protected:
     static decltype(auto) call([[maybe_unused]] Self& self, Registry& registry, Fn&& fn) {
         using F = std::remove_cvref_t<Fn>;
         if constexpr (std::is_member_function_pointer_v<F>) {
-            using C = typename MemberOf<F>::type;  // a component, or an interface (Provides<C>)
-            constexpr std::size_t targets = wellFormed ? Info::template providerCount<C> : 1;
-            if constexpr (Info::template brokenCount<C> > 0) {
-                // A provider of C that can't be used as one, reported here or by compose<...>.
-                using Broken = typename Info::template RootBroken<C>;
-                if constexpr (isPassed<Broken>) {
-                    return RunMistake{};
-                } else {
-                    return RunTargetMistake<Broken>{};
-                }
-            } else if constexpr (targets == 0) {
-                return RunTargetNotComposed<C, F>{};
-            } else if constexpr (targets > 1 && Info::template mixedProviders<C>) {
-                return RunTargetMistake<typename Info::template Mixed<C>>{};
-            } else if constexpr (targets > 1 && !Info::template chosenAtRuntime<C>) {
-                return RunTargetAmbiguous<C, typename Info::template Providers<C>>{};
-            } else if constexpr (!Info::template chosenAtRuntime<C> &&
-                                 isConditional<FirstOr<typename Info::template Providers<C>, void>>) {
-                return RunTargetConditional<C, FirstOr<typename Info::template Providers<C>, void>>{};
-            } else if constexpr (!std::is_invocable_v<F, C&>) {
-                return RunTargetNotCallable<F>{};
-            } else {
-                C& target = self.template getComponent<C>();
-                registry.start();
-                return (target.*fn)();
-            }
+            return callMember<typename MemberOf<F>::type, F>(self, registry, fn);
         } else if constexpr (std::is_invocable_v<Fn>) {
             registry.start();
             if constexpr (std::is_invocable_v<Fn, Self&>) {
@@ -2304,6 +2248,35 @@ protected:
             return std::forward<Fn>(fn)(self);
         } else {
             return RunNotCallable<Fn>{};
+        }
+    }
+    // C is a component, or an interface (Provides<C>). The diagnostics name template parameters,
+    // not local aliases, which MSVC would print by their own names.
+    template <class C, class F, class Self>
+    static decltype(auto) callMember([[maybe_unused]] Self& self, Registry& registry, [[maybe_unused]] F fn) {
+        constexpr std::size_t targets = wellFormed ? Info::template providerCount<C> : 1;
+        if constexpr (Info::template brokenCount<C> > 0) {
+            // A provider of C that can't be used as one, reported here or by compose<...>.
+            if constexpr (isPassed<typename Info::template RootBroken<C>>) {
+                return RunMistake{};
+            } else {
+                return RunTargetMistake<typename Info::template RootBroken<C>>{};
+            }
+        } else if constexpr (targets == 0) {
+            return RunTargetNotComposed<C, F>{};
+        } else if constexpr (targets > 1 && Info::template mixedProviders<C>) {
+            return RunTargetMistake<typename Info::template Mixed<C>>{};
+        } else if constexpr (targets > 1 && !Info::template chosenAtRuntime<C>) {
+            return RunTargetAmbiguous<C, typename Info::template Providers<C>>{};
+        } else if constexpr (!Info::template chosenAtRuntime<C> &&
+                             isConditional<FirstOr<typename Info::template Providers<C>, void>>) {
+            return RunTargetConditional<C, FirstOr<typename Info::template Providers<C>, void>>{};
+        } else if constexpr (!std::is_invocable_v<F, C&>) {
+            return RunTargetNotCallable<F>{};
+        } else {
+            C& target = self.template getComponent<C>();
+            registry.start();
+            return (target.*fn)();
         }
     }
 

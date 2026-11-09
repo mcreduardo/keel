@@ -9,13 +9,12 @@ mistake, and its template arguments name the types involved. With Clang, the fir
 already says it:
 
 ```
-error: static assertion failed due to requirement 'dependencyComposed<Server, Logger>': keel: missing
-dependency: the Component in MissingDependency<Component, Dependency> needs Dependency, and no composed
-component is or provides it.
+error: static assertion failed due to requirement 'fixed<keel::detail::MissingDependency<Server, Logger>>':
+keel: missing dependency: the Component in MissingDependency<Component, Dependency> needs Dependency, and
+no composed component is or provides it.
 ```
 
-and the notes below it show `keel::detail::MissingDependency<Server, Logger>`, ending with
-the line of your code that composed the App. Read the message as a sentence with the
+and the notes below it end with the line of your code that composed the App. Read the message as a sentence with the
 template parameters filled in: `Server` needs `Logger`.
 
 "One error" is per mistake *and* per place that runs into it: two components that both
@@ -365,8 +364,7 @@ nor with the App. Fix: take nothing, or take the App (`ServerApp&`).
 
 **`requireValid`** (34). A failing `static_assert(keel::requireValid<...>)` fails on the
 mistake's own named assertion (`static assertion failed due to requirement
-'dependencyComposed<Server, Logger>'`, in `MissingDependency<Server, Logger>`), not on the
-guard's `static_assert`.
+'fixed<keel::detail::MissingDependency<Server, Logger>>'`), not on the guard's `static_assert`.
 
 ### Conditional components
 
