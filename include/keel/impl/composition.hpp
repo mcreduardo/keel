@@ -83,6 +83,17 @@ struct ProviderFailuresOf<TypeList<Failures...>> {
     using type = ProviderFailures<Failures...>;
 };
 
+// What a lookup of one T resolves to; each place that looks T up reports its own diagnostic.
+enum class Resolution : unsigned char {
+    single,       // one provider, not a keel::Conditional
+    chosen,       // keel::Alternative<T>s only, chosen at runtime
+    conditional,  // one provider, a keel::Conditional
+    none,
+    mixed,        // keel::Provides<T> and keel::Alternative<T> providers
+    ambiguous,    // several providers, not alternatives
+    broken        // a provider that can't be used as a T
+};
+
 template <class List>
 struct Composition;
 
@@ -125,6 +136,19 @@ struct Composition<TypeList<Cs...>> {
     static constexpr Row plainProviders{(isProvider<T, Cs> && !isAlternative<T, Cs>)...};
     template <class T>
     using Mixed = MixedProviders<T, Keep<plainProviders<T>>, Keep<alternatives<T>>>;
+
+    static constexpr Row conditionals{isConditional<Cs>...};
+    template <class T>
+    static constexpr Resolution resolutionOf() {
+        if (brokenCount<T> > 0) return Resolution::broken;
+        if (providerCount<T> == 0) return Resolution::none;
+        if (chosenAtRuntime<T>) return Resolution::chosen;
+        if (mixedProviders<T>) return Resolution::mixed;
+        if (providerCount<T> > 1) return Resolution::ambiguous;
+        return conditionals[first(providers<T>)] ? Resolution::conditional : Resolution::single;
+    }
+    template <class T>
+    static constexpr Resolution resolution = resolutionOf<T>();
 
     // What a lookup of T finds, in init order.
     template <class T>
@@ -191,23 +215,24 @@ struct Composition<TypeList<Cs...>> {
             } else {
                 return Outcome<Passed>{};  // one error per type the list is wrong about
             }
-        } else if constexpr (brokenCount<T> > 0) {
+        } else if constexpr (resolution<T> == Resolution::broken) {
             if constexpr (reportsBroken<C, T>) {
                 return Outcome<Broken<T>>{};
             } else {
                 return Outcome<Passed>{};
             }
-        } else if constexpr (providerCount<T> == 0 || collection) {
+        } else if constexpr (resolution<T> == Resolution::none || collection) {
             return checkAbsent<C, T, use>();
-        } else if constexpr (providerCount<T> > 1 && use != Use::ordering && mixedProviders<T>) {
+        } else if constexpr (use == Use::ordering) {
+            return Outcome<Passed>{};  // After<T> orders after every provider
+        } else if constexpr (resolution<T> == Resolution::mixed) {
             return Outcome<Mixed<T>>{};
-        } else if constexpr (providerCount<T> > 1 && use != Use::ordering && !chosenAtRuntime<T>) {
+        } else if constexpr (resolution<T> == Resolution::ambiguous) {
             return Outcome<AmbiguousDependency<C, T, Providers<T>>>{};
-        } else if constexpr (use == Use::required && !chosenAtRuntime<T> &&
-                             isConditional<FirstOr<Providers<T>, void>>) {
+        } else if constexpr (resolution<T> == Resolution::conditional && use == Use::required) {
             return Outcome<RequiredConditional<C, T, FirstOr<Providers<T>, void>>>{};
         } else {
-            return Outcome<Passed>{};  // After<T> orders after every provider
+            return Outcome<Passed>{};
         }
     }
     // No provider of T, or a collection. A component that derives from T without providing it

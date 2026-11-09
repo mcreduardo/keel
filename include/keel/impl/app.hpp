@@ -103,22 +103,20 @@ public:
     template <class T>
     T& getComponent() {
         constexpr std::size_t providers = Info::template providerCount<T>;
-        constexpr bool chosenAtRuntime = Info::template chosenAtRuntime<T>;
-        using Providers = typename Info::template Providers<T>;
-        using Provider = FirstOr<Providers, void>;
-        // One mistake, one error: an invalid compose<...> list is reported there, not here.
+        constexpr Resolution resolution = resolutionOf<T>();
+        // The root may look up a conditional component (to configure it).
         using Diagnosis = std::conditional_t<
-            !wellFormed, Passed,
+            resolution == Resolution::broken, typename Info::template RootBroken<T>,
             std::conditional_t<
-                (Info::template brokenCount<T> > 0), typename Info::template RootBroken<T>,
-                std::conditional_t<
-                    providers == 1 || chosenAtRuntime, Passed,
-                    std::conditional_t<
-                        providers == 0, NotInApp<T>,
-                        std::conditional_t<Info::template mixedProviders<T>, typename Info::template Mixed<T>,
-                                           AmbiguousInterface<T, typename Info::template Providers<T>>>>>>>;
+                resolution == Resolution::none, NotInApp<T>,
+                std::conditional_t<resolution == Resolution::mixed, typename Info::template Mixed<T>,
+                                   std::conditional_t<resolution == Resolution::ambiguous,
+                                                      AmbiguousInterface<T, typename Info::template Providers<T>>,
+                                                      Passed>>>>;
         static_assert(sizeof(Diagnosis) > 0);
-        if constexpr ((providers == 1 || chosenAtRuntime) && implements<Provider, T>()) {  // else an error above
+        using Provider = FirstOr<typename Info::template Providers<T>, void>;
+        if constexpr ((providers == 1 || Info::template chosenAtRuntime<T>) &&
+                      implements<Provider, T>()) {  // else an error above
             // Built here (T may have no bindings), on the stack so the lookup doesn't allocate.
             // One provider resolves before init() too, even a keel::Conditional: the root may configure it.
             const auto bindings = bindingsOf<T>(std::make_index_sequence<providers>{});
@@ -190,22 +188,21 @@ protected:
     // not local aliases, which MSVC would print by their own names.
     template <class C, class F, class Self>
     static decltype(auto) callMember([[maybe_unused]] Self& self, Registry& registry, [[maybe_unused]] F fn) {
-        constexpr std::size_t targets = wellFormed ? Info::template providerCount<C> : 1;
-        if constexpr (Info::template brokenCount<C> > 0) {
+        constexpr Resolution resolution = resolutionOf<C>();
+        if constexpr (resolution == Resolution::broken) {
             // A provider of C that can't be used as one, reported here or by compose<...>.
             if constexpr (isPassed<typename Info::template RootBroken<C>>) {
                 return RunMistake{};
             } else {
                 return RunTargetMistake<typename Info::template RootBroken<C>>{};
             }
-        } else if constexpr (targets == 0) {
+        } else if constexpr (resolution == Resolution::none) {
             return RunTargetNotComposed<C, F>{};
-        } else if constexpr (targets > 1 && Info::template mixedProviders<C>) {
+        } else if constexpr (resolution == Resolution::mixed) {
             return RunTargetMistake<typename Info::template Mixed<C>>{};
-        } else if constexpr (targets > 1 && !Info::template chosenAtRuntime<C>) {
+        } else if constexpr (resolution == Resolution::ambiguous) {
             return RunTargetAmbiguous<C, typename Info::template Providers<C>>{};
-        } else if constexpr (!Info::template chosenAtRuntime<C> &&
-                             isConditional<FirstOr<typename Info::template Providers<C>, void>>) {
+        } else if constexpr (resolution == Resolution::conditional) {
             return RunTargetConditional<C, FirstOr<typename Info::template Providers<C>, void>>{};
         } else if constexpr (!std::is_invocable_v<F, C&>) {
             return RunTargetNotCallable<F>{};
@@ -217,6 +214,16 @@ protected:
     }
 
 private:
+    // One mistake, one error: an invalid compose<...> list is reported there, not by a lookup.
+    template <class T>
+    static constexpr Resolution resolutionOf() {
+        if constexpr (wellFormed) {
+            return Info::template resolution<T>;
+        } else {
+            return Resolution::single;
+        }
+    }
+
     template <class... Sorted>
     void addAll(TypeList<Sorted...>) {
         (registry_.add(storage_.template get<Sorted>()), ...);
