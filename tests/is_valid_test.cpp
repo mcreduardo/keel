@@ -41,17 +41,22 @@ static_assert(!keel::isValid<Config, Logger, Config>);
 
 // A duplicate in a component's own list (reported by its constructor).
 class TwiceLogger : public keel::Component<Logger, keel::Optional<Logger>> {};
-class TwiceListedProvides : public keel::Component<keel::Provides<Storage>, keel::Provides<Storage>>, public Storage {};
 static_assert(!keel::isValid<Config, Logger, TwiceLogger>);
-static_assert(!keel::isValid<TwiceListedProvides>);
 
-// keel::Provides<I> and keel::Alternative<I> are base classes: listed, they are errors.
+// Entries that aren't dependencies (InvalidDependency): keel's base classes, a bundle, a
+// misnested All, listed once or twice.
 class ListedProvides : public keel::Component<keel::Provides<Storage>>, public Storage {};
+class TwiceListedProvides : public keel::Component<keel::Provides<Storage>, keel::Provides<Storage>>, public Storage {};
 class ListedAlternative : public keel::Component<keel::Alternative<Storage>>, public Storage, public keel::Conditional {
     bool enabled() const override { return true; }
 };
+class ListedAsync : public keel::Component<keel::AsyncInit> {};
+class ListedBundle : public keel::Component<keel::Bundle<Config, Logger>> {};
 static_assert(!keel::isValid<ListedProvides>);
+static_assert(!keel::isValid<TwiceListedProvides>);
 static_assert(!keel::isValid<ListedAlternative>);
+static_assert(!keel::isValid<ListedAsync>);
+static_assert(!keel::isValid<ListedBundle, Config, Logger>);
 
 // Both bases for one interface: checked when something refers to it.
 class ProvidesAndAlternative : public keel::Component<>, public keel::Alternative<Storage>,

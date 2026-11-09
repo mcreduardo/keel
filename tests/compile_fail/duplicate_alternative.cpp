@@ -1,4 +1,4 @@
-// Must not compile: keel::Alternative<Cache> is listed twice.
+// Must not compile: keel::Alternative<Cache> is listed twice (one InvalidDependency).
 #include <keel.hpp>
 
 struct Cache {

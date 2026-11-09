@@ -117,7 +117,7 @@ app.getComponent<Storage>();     // the one component that derives from keel::Pr
   with two providers (`AmbiguousInterface<I, TypeList<...>>`, or `MixedProviders<...>` when
   some derive from `Provides<I>` and others from `Alternative<I>`). So is a provider that
   derives from `Provides<I>` or `Alternative<I>` but can't be used as an `I`
-  (`NotDerivedFromInterface`, `InaccessibleProvides`, ...).
+  (`NotDerivedFromInterface`, `InaccessibleBase`, ...).
 
 ## Grouping: `keel::Bundle<...>`
 
@@ -136,7 +136,7 @@ auto app = keel::compose<Core, Persistence, Http>(argc, argv);
 - **Each component and each bundle once.** A component that two bundles contain is
   `DuplicateComponent<T>`; a bundle reached twice is `DuplicateBundle<B>`. Write
   overlapping groups as a shared bundle plus the rest.
-- **A bundle is not a dependency.** `keel::Component<Core>` is `BundleAsDependency`: a
+- **A bundle is not a dependency.** `keel::Component<Core>` is `InvalidDependency`: a
   component lists the components it uses, each on its own.
 - `keel::App<Core, Router>` and `keel::App<Config, Logger, Router>` have the same
   components but are different types.

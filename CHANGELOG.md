@@ -9,6 +9,19 @@ may change the API.
 
 ### Changed
 
+- Merged diagnostics (what compiles is unchanged; one error per mistake as before):
+  - `InvalidDependency<C, Entry>` now also covers what were `ProvidesAsDependency`,
+    `AlternativeAsDependency`, `AsyncAsDependency`, `MisplacedAsync`, `BundleAsDependency`,
+    `MisnestedAll`, and listing `keel::Provides<I>`, `keel::Alternative<I>`,
+    `keel::AsyncInit` or `keel::AsyncStart` twice (one error per type an entry is about).
+  - `InaccessibleProvides<C, I>`, `InaccessibleAlternative<C, I>`, `InaccessibleConditional<C>`
+    and `InaccessibleAsync<C>` → `InaccessibleBase<C, Base>` (Base is `keel::Provides<I>`,
+    `keel::Alternative<I>`, `keel::Conditional`, `keel::AsyncInit` or `keel::AsyncStart`).
+  - `UndeclaredSubclass<C, T, Derived>` and `LeftOutOfAll<C, T, Derived>` →
+    `UndeclaredProvider<C, T, Derived>`.
+  - `RequiredConditional<C, T>` and `RequiredConditionalProvider<C, I, Provider>` →
+    `RequiredConditional<C, T, Provider>` (Provider is T itself for a conditional component).
+  - `examples/compile_errors.cpp` has 35 cases instead of 48, renumbered.
 - Clang's first line of a compile-time diagnostic names the diagnostic with its types
   (`requirement 'fixed<keel::detail::MissingDependency<Server, Logger>>'`) instead of a
   per-diagnostic variable (`'dependencyComposed<Server, Logger>'`). Messages are unchanged.

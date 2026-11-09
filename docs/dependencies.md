@@ -120,11 +120,10 @@ auto app = keel::compose<Service, DiskStorage, Config>();
 - A component may provide several interfaces: one `keel::Provides<>` base per interface.
 - It must derive publicly and unambiguously from each one (else
   `NotDerivedFromInterface<C, I>`), and from each `keel::Provides<I>` publicly and once
-  (else `InaccessibleProvides<C, I>`; `class` bases are private by default).
-- `keel::Provides<I>` is not a list entry: listing it in `keel::Component<...>` is
-  `ProvidesAsDependency<C, I>` (and `keel::Alternative<I>` there is
-  `AlternativeAsDependency<C, I>`). The list says what a component needs, its bases what
-  it is.
+  (else `InaccessibleBase<C, keel::Provides<I>>`; `class` bases are private by default).
+- `keel::Provides<I>` is not a list entry: listing it (or `keel::Alternative<I>`) in
+  `keel::Component<...>` is `InvalidDependency<C, keel::Provides<I>>`. The list says what a
+  component needs, its bases what it is.
 - keel finds out what a component provides by asking: "does `C` provide `I`?", for each
   `I` that something refers to (a dependency of a composed component, or the root's
   `getComponent<I>()` or `run(&I::f)`). C++20 can't list a class's base classes. So a
@@ -174,7 +173,7 @@ auto test = keel::compose<Service, FakeClock>();  // Service's Clock is the Fake
 ```
 
 Without `Provides<Clock>` in `Clock`, composing `FakeClock` in its place is
-`UndeclaredSubclass<Service, Clock, FakeClock>`. With it, composing both `Clock` and
+`UndeclaredProvider<Service, Clock, FakeClock>`. With it, composing both `Clock` and
 `FakeClock` is ambiguous, as for any interface.
 
 ## Collections: `keel::All<I>` and `keel::Optional<keel::All<I>>`
@@ -232,5 +231,5 @@ class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {
   HealthCheck, TypeList<...>>`. `Optional<All<I>>` has no such rule.
 - **Nothing is left out silently.** A composed class that derives from `I` without
   providing it would be missing from the list, so it is a compile error:
-  `LeftOutOfAll<HealthEndpoint, HealthCheck, Cache>`.
-- `All<Optional<I>>` is `MisnestedAll`, with a hint to write `Optional<All<I>>`.
+  `UndeclaredProvider<HealthEndpoint, HealthCheck, Cache>`.
+- `All<Optional<I>>` is `InvalidDependency`, with a hint to write `Optional<All<I>>`.

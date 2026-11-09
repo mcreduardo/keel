@@ -83,21 +83,9 @@ using Outcome = std::type_identity<Result>;
 // The component's constructor and compose<...> share this instantiation: a duplicate is one error.
 template <class Base>
 struct ComponentListCheck {
-    static_assert(Base::uniqueDependencies,
+    static_assert(Base::uniqueEntries,
                   "keel: a dependency is listed twice in keel::Component<...> (T, keel::Optional<T>, "
                   "keel::After<T>, keel::All<T> and keel::Optional<keel::All<T>> count as the same)");
-    static_assert(Base::uniqueListedAlternatives,
-                  "keel: keel::Alternative<I> is listed twice in keel::Component<...>, which lists only what the "
-                  "component needs. Inherit keel::Alternative<I> instead, once: class C : public "
-                  "keel::Component<...>, public keel::Alternative<I>, public I, public keel::Conditional");
-    static_assert(Base::uniqueListedProvides,
-                  "keel: keel::Provides<I> is listed twice in keel::Component<...>, which lists only what the "
-                  "component needs. Inherit keel::Provides<I> instead, once: class C : public "
-                  "keel::Component<...>, public keel::Provides<I>, public I");
-    static_assert(Base::uniqueListedAsync,
-                  "keel: keel::AsyncInit or keel::AsyncStart is listed twice in keel::Component<...>, which lists "
-                  "only dependencies. Inherit it instead, once: class C : public keel::Component<...>, public "
-                  "keel::AsyncInit");
 };
 
 template <class Component, class Dependency>
@@ -147,22 +135,14 @@ struct OnlyConditionalProviders {
                   "conditional.");
 };
 
-template <class Component, class T>
+template <class Component, class T, class Provider>
 struct RequiredConditional {
     static_assert(fixed<RequiredConditional>,
-                  "keel: the Component in RequiredConditional<Component, T> requires T, and T is a "
-                  "keel::Conditional that configuration may turn off. Depend on keel::Optional<T> instead, and "
-                  "use findComponent<T>(), which returns nullptr while T is disabled (or keel::After<T> for "
-                  "ordering only).");
-};
-
-template <class Component, class Interface, class Provider>
-struct RequiredConditionalProvider {
-    static_assert(fixed<RequiredConditionalProvider>,
-                  "keel: the Component in RequiredConditionalProvider<Component, Interface, Provider> requires "
-                  "Interface, and its one provider, Provider, is a keel::Conditional that configuration may turn "
-                  "off. Depend on keel::Optional<Interface> instead, or compose a provider that is always there "
-                  "(to choose one of several at runtime, make each a keel::Alternative<Interface> and a "
+                  "keel: the Component in RequiredConditional<Component, T, Provider> requires T, and Provider (T "
+                  "itself, or its one provider) is a keel::Conditional that configuration may turn off. Depend on "
+                  "keel::Optional<T> instead and use findComponent<T>(), which returns nullptr while it is "
+                  "disabled (or keel::After<T> for ordering only), or compose a provider of T that is always "
+                  "there (to choose one of several at runtime, make each a keel::Alternative<T> and a "
                   "keel::Conditional).");
 };
 
@@ -184,38 +164,14 @@ struct ProvidesAndAlternative {
                   "keel::Provides<Interface> if it is always the one.");
 };
 
-template <class Component, class Interface>
-struct MisnestedAll {
-    static_assert(fixed<MisnestedAll>,
-                  "keel: the Component in MisnestedAll<Component, Interface> lists "
-                  "keel::All<keel::Optional<Interface>>; write keel::Optional<keel::All<Interface>> for a list "
-                  "that may be empty");
-};
-
 template <class Component, class T, class Derived>
 struct UndeclaredProvider {
     static_assert(fixed<UndeclaredProvider>,
-                  "keel: the Component in UndeclaredProvider<Component, T, Derived> depends on T, nothing "
-                  "composed is or provides T, and Derived derives from T without deriving from keel::Provides<T>. "
-                  "Dependencies match by exact type: derive Derived from keel::Provides<T> too (publicly), or "
-                  "depend on Derived.");
-};
-
-template <class Component, class T, class Derived>
-struct UndeclaredSubclass {
-    static_assert(fixed<UndeclaredSubclass>,
-                  "keel: the Component in UndeclaredSubclass<Component, T, Derived> depends on T, which isn't "
-                  "composed. Derived is a subclass of the component T, but keel matches exact types: compose T "
-                  "itself, or derive T from keel::Provides<T> (publicly) so its subclasses provide T.");
-};
-
-template <class Component, class T, class Derived>
-struct LeftOutOfAll {
-    static_assert(fixed<LeftOutOfAll>,
-                  "keel: the Component in LeftOutOfAll<Component, T, Derived> lists keel::All<T> (or "
-                  "keel::Optional<keel::All<T>>), and Derived derives from T but would be left out: keel matches "
-                  "exact types. Derive Derived from keel::Provides<T> too (for a subclass of the component T, "
-                  "derive T itself from it), or stop deriving from T.");
+                  "keel: the Component in UndeclaredProvider<Component, T, Derived> depends on T (as T, "
+                  "keel::Optional<T>, keel::After<T> or keel::All<T>), and Derived derives from T without "
+                  "providing it: keel matches exact types, so Derived isn't used as a T. Derive Derived from "
+                  "keel::Provides<T> too (publicly); if T is itself a component, compose T, or derive T from "
+                  "keel::Provides<T> so that its subclasses provide it; or depend on Derived.");
 };
 
 template <class Component, class Interface>
@@ -226,43 +182,13 @@ struct NotDerivedFromInterface {
                   "Interface publicly and unambiguously (or Interface isn't defined at this point)");
 };
 
-template <class Component, class Interface>
-struct InaccessibleProvides {
-    static_assert(fixed<InaccessibleProvides>,
-                  "keel: the Component in InaccessibleProvides<Component, Interface> derives from "
-                  "keel::Provides<Interface> privately, protectedly or more than once, so keel can't see that it "
-                  "provides Interface. Derive from keel::Provides<Interface> publicly, once (a subclass of a "
-                  "provider inherits it): class C : public keel::Component<...>, public keel::Provides<Interface>, "
-                  "public Interface");
-};
-
-template <class Component, class Interface>
-struct InaccessibleAlternative {
-    static_assert(fixed<InaccessibleAlternative>,
-                  "keel: the Component in InaccessibleAlternative<Component, Interface> derives from "
-                  "keel::Alternative<Interface> privately, protectedly or more than once, so keel can't see that it "
-                  "is an alternative of Interface. Derive from keel::Alternative<Interface> publicly, once: class C "
-                  ": public keel::Component<...>, public keel::Alternative<Interface>, public Interface, public "
-                  "keel::Conditional");
-};
-
-template <class Component, class Interface>
-struct AlternativeAsDependency {
-    static_assert(fixed<AlternativeAsDependency>,
-                  "keel: the Component in AlternativeAsDependency<Component, Interface> lists "
-                  "keel::Alternative<Interface> in its keel::Component<...>, which lists only what the component "
-                  "needs. Inherit it instead, next to keel::Component<...>: class Component : public "
-                  "keel::Component<...>, public keel::Alternative<Interface>, public Interface, public "
-                  "keel::Conditional");
-};
-
-template <class Component, class Interface>
-struct ProvidesAsDependency {
-    static_assert(fixed<ProvidesAsDependency>,
-                  "keel: the Component in ProvidesAsDependency<Component, Interface> lists keel::Provides<Interface> "
-                  "in its keel::Component<...>, which lists only what the component needs. Inherit it instead, next "
-                  "to keel::Component<...>: class Component : public keel::Component<...>, public "
-                  "keel::Provides<Interface>, public Interface");
+template <class Component, class Base>
+struct InaccessibleBase {
+    static_assert(fixed<InaccessibleBase>,
+                  "keel: the Component in InaccessibleBase<Component, Base> derives from Base privately (the "
+                  "default for class), protectedly or more than once, so keel can't see it. Derive from Base "
+                  "publicly, once: class C : public keel::Component<...>, public Base; if a base class of "
+                  "Component already derives from Base, don't derive from it again.");
 };
 
 // One error per mistaken provider of one interface.
@@ -272,35 +198,13 @@ struct ProviderFailures : Failures... {};
 template <class Component, class Entry>
 struct InvalidDependency {
     static_assert(fixed<InvalidDependency>,
-                  "keel: the Component in InvalidDependency<Component, Entry> lists Entry (T, keel::Optional<T>, "
-                  "keel::After<T> or keel::All<T>), and T can never be a component or an interface: T must be "
-                  "a class type, not a reference, not const/volatile, and not itself keel::Optional, "
-                  "keel::After, keel::Provides, keel::Alternative or keel::All");
-};
-
-template <class Component, class Entry>
-struct MisplacedAsync {
-    static_assert(fixed<MisplacedAsync>,
-                  "keel: the Component in MisplacedAsync<Component, Entry> lists keel::AsyncInit or "
-                  "keel::AsyncStart inside Entry. They aren't dependencies but base classes: class C : public "
-                  "keel::Component<Config>, public keel::AsyncInit");
-};
-
-template <class Component, class Marker>
-struct AsyncAsDependency {
-    static_assert(fixed<AsyncAsDependency>,
-                  "keel: the Component in AsyncAsDependency<Component, Marker> lists the Marker (keel::AsyncInit or "
-                  "keel::AsyncStart) in its keel::Component<...>, which lists only dependencies. Inherit it "
-                  "instead, next to keel::Component<...>: class Component : public keel::Component<...>, public "
-                  "Marker");
-};
-
-template <class Component, class Bundle>
-struct BundleAsDependency {
-    static_assert(fixed<BundleAsDependency>,
-                  "keel: the Component in BundleAsDependency<Component, Bundle> lists a keel::Bundle<...> in its "
-                  "keel::Component<...> (as T, keel::Optional<T>, keel::After<T>, ...). Bundles only group "
-                  "components for compose<...>: list the components you use, each on its own.");
+                  "keel: the Component in InvalidDependency<Component, Entry> lists Entry in its "
+                  "keel::Component<...>, which lists only dependencies, and Entry isn't one. It is a keel marker "
+                  "that is a base class (keel::Provides<I>, keel::Alternative<I>, keel::AsyncInit, "
+                  "keel::AsyncStart: inherit it next to keel::Component<...>), a keel::Bundle<...> (list its "
+                  "components), keel::All<keel::Optional<I>> (write keel::Optional<keel::All<I>>), or names a "
+                  "type no dependency can name (T in T, keel::Optional<T>, keel::After<T> and keel::All<T> must be "
+                  "a class type, not a reference, not const/volatile, and not itself a keel marker)");
 };
 
 template <class Bundle>
@@ -338,26 +242,10 @@ struct AbstractComponent {
                   "keel::Conditional must override `bool enabled() const`, const included.)");
 };
 
-template <class T>
-struct InaccessibleConditional {
-    static_assert(fixed<InaccessibleConditional>,
-                  "keel: the T in InaccessibleConditional<T> derives from keel::Conditional privately, protectedly "
-                  "or more than once, so keel can't ask its enabled(). Derive from keel::Conditional publicly, "
-                  "once.");
-};
-
 // A template only so that the assertion is dependent.
 template <class... None>
 struct EmptyComposition {
     static_assert(fixed<EmptyComposition>, "keel: compose<...> needs at least one component");
-};
-
-template <class T>
-struct InaccessibleAsync {
-    static_assert(fixed<InaccessibleAsync>,
-                  "keel: the T in InaccessibleAsync<T> derives from keel::AsyncInit or keel::AsyncStart privately, "
-                  "protectedly or more than once, so keel can't see it. Derive from it publicly, once: class C : "
-                  "public keel::Component<...>, public keel::AsyncInit");
 };
 
 // Converts to anything and supports the usual operators, so the mistake in fn is the only

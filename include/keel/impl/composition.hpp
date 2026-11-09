@@ -52,8 +52,8 @@ inline constexpr bool brokenProvider = provision<C, I> >= Provision::notDerived 
                                        (providesBase<C, I> && alternativeBase<C, I>);
 template <class C, class I>
 using ProviderFailure = std::conditional_t<
-    provision<C, I> == Provision::inaccessible, InaccessibleProvides<C, I>,
-    std::conditional_t<alternativeProvision<C, I> == Provision::inaccessible, InaccessibleAlternative<C, I>,
+    provision<C, I> == Provision::inaccessible, InaccessibleBase<C, Provides<I>>,
+    std::conditional_t<alternativeProvision<C, I> == Provision::inaccessible, InaccessibleBase<C, Alternative<I>>,
                        std::conditional_t<providesBase<C, I> && alternativeBase<C, I>, ProvidesAndAlternative<C, I>,
                                           NotDerivedFromInterface<C, I>>>>;
 
@@ -61,20 +61,13 @@ template <class T, class C>
 inline constexpr bool isAlternative = alternativeBase<C, T> || contains<T, ListedAlternativesOf<C>>;
 
 // Provides<T>/Alternative<T> listed by mistake, or a C that can't be used as a T, count too,
-// so that ProvidesAsDependency or NotDerivedFromInterface is the one error.
+// so that InvalidDependency or NotDerivedFromInterface is the one error.
 template <class T, class C>
 inline constexpr bool isProvider =
     std::is_same_v<T, C> || providesBase<C, T> || alternativeBase<C, T> || contains<T, ListedOf<C>>;
 
-// With the root's getComponent<T>() and run(&T::f), the types keel asks the components about.
-template <class Entry>
-inline constexpr bool isDependencyEntry =
-    (Split<Entry>::use == Use::required || Split<Entry>::use == Use::optional ||
-     Split<Entry>::use == Use::ordering || Split<Entry>::use == Use::all || Split<Entry>::use == Use::optionalAll) &&
-    couldBeComponent<typename Split<Entry>::target> && !isBundle<typename Split<Entry>::target>;
-
 template <class T, class Entry>
-inline constexpr bool isDependencyOn = isDependencyEntry<Entry> && std::is_same_v<typename Split<Entry>::target, T>;
+inline constexpr bool isDependencyOn = validEntry<Entry> && std::is_same_v<typename Split<Entry>::target, T>;
 template <class T, class Entries>
 inline constexpr bool hasDependencyOn = false;
 template <class T, class... Entries>
@@ -192,20 +185,12 @@ struct Composition<TypeList<Cs...>> {
     static auto check() {
         constexpr Use use = Split<Entry>::use;
         constexpr bool collection = use == Use::all || use == Use::optionalAll;
-        if constexpr (use == Use::listedAsync) {
-            return Outcome<AsyncAsDependency<C, T>>{};
-        } else if constexpr (use == Use::listedProvides) {
-            return Outcome<ProvidesAsDependency<C, T>>{};
-        } else if constexpr (use == Use::listedAlternative) {
-            return Outcome<AlternativeAsDependency<C, T>>{};
-        } else if constexpr (isAsyncMarker<T>) {
-            return Outcome<MisplacedAsync<C, Entry>>{};
-        } else if constexpr (isBundle<T>) {
-            return Outcome<BundleAsDependency<C, T>>{};
-        } else if constexpr (use == Use::misnested) {
-            return Outcome<MisnestedAll<C, T>>{};
-        } else if constexpr (!couldBeComponent<T>) {
-            return Outcome<InvalidDependency<C, Entry>>{};
+        if constexpr (!validEntry<Entry>) {
+            if constexpr (std::is_same_v<Entry, FirstInvalidOn<Stripped<T>, EntriesOf<C>>>) {
+                return Outcome<InvalidDependency<C, Entry>>{};
+            } else {
+                return Outcome<Passed>{};  // one error per type the list is wrong about
+            }
         } else if constexpr (brokenCount<T> > 0) {
             if constexpr (reportsBroken<C, T>) {
                 return Outcome<Broken<T>>{};
@@ -220,27 +205,17 @@ struct Composition<TypeList<Cs...>> {
             return Outcome<AmbiguousDependency<C, T, Providers<T>>>{};
         } else if constexpr (use == Use::required && !chosenAtRuntime<T> &&
                              isConditional<FirstOr<Providers<T>, void>>) {
-            if constexpr (std::is_same_v<FirstOr<Providers<T>, void>, T>) {
-                return Outcome<RequiredConditional<C, T>>{};
-            } else {
-                return Outcome<RequiredConditionalProvider<C, T, FirstOr<Providers<T>, void>>>{};
-            }
+            return Outcome<RequiredConditional<C, T, FirstOr<Providers<T>, void>>>{};
         } else {
             return Outcome<Passed>{};  // After<T> orders after every provider
         }
     }
-    // No provider of T, or a collection. For All<T>, a component that derives from T without
-    // providing it is the likely mistake.
+    // No provider of T, or a collection. A component that derives from T without providing it
+    // is the likely mistake.
     template <class C, class T, Use use, class Subclass = FirstOr<Derived<C, T>, void>>
     static auto checkAbsent() {
         if constexpr (!std::is_void_v<Subclass>) {
-            if constexpr (use == Use::all || use == Use::optionalAll) {
-                return Outcome<LeftOutOfAll<C, T, Subclass>>{};
-            } else if constexpr (derivesFromComponent<T>) {
-                return Outcome<UndeclaredSubclass<C, T, Subclass>>{};
-            } else {
-                return Outcome<UndeclaredProvider<C, T, Subclass>>{};
-            }
+            return Outcome<UndeclaredProvider<C, T, Subclass>>{};
         } else if constexpr (use == Use::required) {
             return Outcome<MissingDependency<C, T>>{};
         } else if constexpr (use == Use::all && count(others<C, T>) == 0) {
@@ -260,7 +235,9 @@ struct Composition<TypeList<Cs...>> {
         using T = typename Split<Entry>::target;
         constexpr Use use = Split<Entry>::use;
         Row row{};
-        if constexpr (use == Use::ordering || use == Use::all || use == Use::optionalAll) {
+        if constexpr (!validEntry<Entry>) {
+            // InvalidDependency: no edges
+        } else if constexpr (use == Use::ordering || use == Use::all || use == Use::optionalAll) {
             row = others<C, T>;
         } else if constexpr ((use == Use::required || use == Use::optional) &&
                              (providerCount<T> <= 1 || chosenAtRuntime<T>)) {

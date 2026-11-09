@@ -98,33 +98,20 @@ public:
     using OptionalDependencies = detail::TargetsOf<Entries, detail::Use::optional>;
     using AfterDependencies = detail::TargetsOf<Entries, detail::Use::ordering>;
     using AllDependencies = detail::TargetsOf<Entries, detail::Use::all, detail::Use::optionalAll>;
-    using MisnestedDependencies = detail::TargetsOf<Entries, detail::Use::misnested>;
-    using DeclaredDependencies = detail::TargetsOf<Entries, detail::Use::required, detail::Use::optional,
-                                                   detail::Use::ordering, detail::Use::all, detail::Use::optionalAll,
-                                                   detail::Use::misnested>;
-    using ListedProvides = detail::TargetsOf<Entries, detail::Use::listedProvides>;
-    using ListedAlternatives = detail::TargetsOf<Entries, detail::Use::listedAlternative>;
+    // Only valid entries: an invalid one is InvalidDependency, even if listed twice.
+    using DeclaredDependencies = detail::ValidTargets<Dependencies...>;
 
     // T, Optional<T>, After<T>, All<T> and Optional<All<T>> all name T: two of them are a duplicate.
-    static constexpr bool uniqueDependencies = detail::UniqueList<DeclaredDependencies>::value;
-    static constexpr bool uniqueListedProvides = detail::UniqueList<ListedProvides>::value;
-    static constexpr bool uniqueListedAlternatives = detail::UniqueList<ListedAlternatives>::value;
-    using ListedAsync = detail::TargetsOf<Entries, detail::Use::listedAsync>;
-    static constexpr bool uniqueListedAsync = detail::UniqueList<ListedAsync>::value;
-    static constexpr bool uniqueEntries =
-        uniqueDependencies && uniqueListedProvides && uniqueListedAlternatives && uniqueListedAsync;
+    static constexpr bool uniqueEntries = detail::UniqueList<DeclaredDependencies>::value;
 
 private:
-    // Accessor asserts are skipped when the list itself is wrong, so one mistake gives one error.
+    // Accessor asserts are skipped for a T the list itself is wrong about: one mistake, one error.
     template <class T>
-    static constexpr bool checkedAccess = uniqueDependencies && !detail::contains<T, MisnestedDependencies>;
-    // A lookup of an async marker asserts unless the list names it; then AsyncAsDependency is the one error.
+    static constexpr bool checkedAccess = !detail::listMistakeOn<T, Dependencies...>;
     template <class T>
-    static constexpr bool markerAccess =
-        detail::contains<T, DeclaredDependencies> || detail::contains<T, ListedAsync>;
+    static constexpr bool baseMarker = detail::isMarker<T> && detail::Split<T>::use == detail::Use::required;
 
 public:
-
     // Checked here, not in the class body: a failed check there would make every later use an error.
     Component() noexcept { static_assert(sizeof(detail::ComponentListCheck<Component>) > 0); }
 
@@ -132,10 +119,10 @@ protected:
     /// A required dependency, usable from init() (or enabled()) on.
     template <class T>
     T& getComponent() const {
-        if constexpr (detail::isAsyncMarker<T>) {
-            static_assert(markerAccess<T>,
-                          "keel: keel::AsyncInit and keel::AsyncStart are base classes, not dependencies: there is no "
-                          "component to get");
+        if constexpr (baseMarker<T> && checkedAccess<T>) {
+            static_assert(!baseMarker<T>,
+                          "keel: keel::Provides<I>, keel::Alternative<I>, keel::AsyncInit and keel::AsyncStart are "
+                          "base classes, not dependencies: there is no component to look up");
         } else if constexpr (checkedAccess<T>) {
             static_assert(!detail::contains<T, OptionalDependencies>,
                           "keel: T is declared keel::Optional<T>; use findComponent<T>(), which may return nullptr");
@@ -152,10 +139,10 @@ protected:
     /// An optional dependency, or nullptr if not composed or disabled.
     template <class T>
     T* findComponent() const {
-        if constexpr (detail::isAsyncMarker<T>) {
-            static_assert(markerAccess<T>,
-                          "keel: keel::AsyncInit and keel::AsyncStart are base classes, not dependencies: there is no "
-                          "component to find");
+        if constexpr (baseMarker<T> && checkedAccess<T>) {
+            static_assert(!baseMarker<T>,
+                          "keel: keel::Provides<I>, keel::Alternative<I>, keel::AsyncInit and keel::AsyncStart are "
+                          "base classes, not dependencies: there is no component to look up");
         } else if constexpr (checkedAccess<T>) {
             static_assert(!detail::contains<T, RequiredDependencies>,
                           "keel: T is a required dependency; use getComponent<T>(), which never returns nullptr");
@@ -174,10 +161,10 @@ protected:
     /// Every enabled provider of I except this component, in init order.
     template <class I>
     std::vector<I*> getAll() const {
-        if constexpr (detail::isAsyncMarker<I>) {
-            static_assert(markerAccess<I>,
-                          "keel: keel::AsyncInit and keel::AsyncStart are base classes, not dependencies: there are no "
-                          "components to get");
+        if constexpr (baseMarker<I> && checkedAccess<I>) {
+            static_assert(!baseMarker<I>,
+                          "keel: keel::Provides<I>, keel::Alternative<I>, keel::AsyncInit and keel::AsyncStart are "
+                          "base classes, not dependencies: there is no component to look up");
         } else if constexpr (checkedAccess<I>) {
             static_assert(!detail::contains<I, RequiredDependencies>,
                           "keel: I is a required dependency (one provider); use getComponent<I>(), or replace it "

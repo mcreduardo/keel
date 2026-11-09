@@ -234,7 +234,7 @@ private:
     }
     template <class Visit, class... Entries>
     static void referredIn(Visit& visit, std::vector<TypeId>& seen, TypeList<Entries...>) {
-        (referredAt<typename Split<Entries>::target, isDependencyEntry<Entries>>(visit, seen), ...);
+        (referredAt<typename Split<Entries>::target, validEntry<Entries>>(visit, seen), ...);
     }
     // One instantiation per type, not per entry (T, Optional<T>, ... name the same T).
     template <class T, bool referral, class Visit>
@@ -345,10 +345,6 @@ private:
             case Use::optionalAll:
                 return "style=\"bold,dashed\"";
             case Use::required:
-            case Use::listedProvides:  // no edges
-            case Use::listedAlternative:
-            case Use::misnested:
-            case Use::listedAsync:
                 return "";
         }
         return "";

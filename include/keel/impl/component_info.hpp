@@ -17,6 +17,31 @@ namespace keel {
 
 namespace detail {
 
+// Provides<I> or Alternative<I> listed by mistake (InvalidDependency) still counts as
+// providing I, so that the mistake is the one error.
+template <class Entry>
+struct Listed {
+    using provides = TypeList<>;
+    using alternatives = TypeList<>;
+};
+template <class I>
+struct Listed<Provides<I>> {
+    using provides = TypeList<I>;
+    using alternatives = TypeList<>;
+};
+template <class I>
+struct Listed<Alternative<I>> {
+    using provides = TypeList<I>;
+    using alternatives = TypeList<I>;
+};
+template <class Entries>
+struct ListedIn;
+template <class... Entries>
+struct ListedIn<TypeList<Entries...>> {
+    using provides = Concat<typename Listed<Entries>::provides...>;
+    using alternatives = Concat<typename Listed<Entries>::alternatives...>;
+};
+
 // Deduced, so that members of C named like Component's own (Entries, ...) don't hide them.
 template <class... Dependencies>
 Component<Dependencies...>* componentBaseOf(Component<Dependencies...>*);
@@ -25,18 +50,16 @@ template <class C>
 struct ComponentInfo {
     using Base = std::remove_pointer_t<decltype(componentBaseOf(static_cast<C*>(nullptr)))>;
     using Entries = typename Base::Entries;
-    using Listed = Concat<typename Base::ListedProvides, typename Base::ListedAlternatives>;
-    using Alternatives = typename Base::ListedAlternatives;
+    using Listed = ListedIn<Entries>;
 };
 template <class C>
 using ComponentOf = typename ComponentInfo<C>::Base;
 template <class C>
 using EntriesOf = typename ComponentInfo<C>::Entries;
-// Provides<I>/Alternative<I> listed by mistake count as provided, so the mistake is the one error.
 template <class C>
-using ListedOf = typename ComponentInfo<C>::Listed;
+using ListedOf = typename ComponentInfo<C>::Listed::provides;
 template <class C>
-using ListedAlternativesOf = typename ComponentInfo<C>::Alternatives;
+using ListedAlternativesOf = typename ComponentInfo<C>::Listed::alternatives;
 template <class C>
 inline constexpr bool uniqueEntriesOf = ComponentOf<C>::uniqueEntries;
 
@@ -47,7 +70,7 @@ struct Need {
     Use use;
 };
 template <class Entry>
-inline constexpr bool checkedAtInit = Split<Entry>::use == Use::required || Split<Entry>::use == Use::optional;
+inline constexpr bool checkedAtInit = validEntry<Entry> && usedAs<Entry, Use::required, Use::optional>;
 
 template <class... Entries>
 inline constexpr std::array<Need, sizeof...(Entries)> needsOf{
@@ -71,11 +94,11 @@ struct NeedsTable<TypeList<Entries...>> {
 template <class C>
 using Needs = NeedsTable<typename NeedsImpl<EntriesOf<C>>::Checked>;
 
-// Public and once (else InaccessibleConditional at compose time). False for an incomplete C.
+// Public and once (else InaccessibleBase at compose time). False for an incomplete C.
 template <class C>
 inline constexpr bool isConditional = std::is_convertible_v<C*, Conditional*>;
 
-// Public and once (else InaccessibleAsync at compose time).
+// Public and once (else InaccessibleBase at compose time).
 template <class C>
 inline constexpr bool hasAsyncInit = std::is_convertible_v<C*, AsyncInit*>;
 template <class C>

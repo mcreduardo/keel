@@ -47,9 +47,11 @@ struct ListInfo {
         } else if constexpr (!derivesFromComponent<C>) {
             return Outcome<NotAComponent<C>>{};
         } else if constexpr (hiddenBase<Conditional, C>) {
-            return Outcome<InaccessibleConditional<C>>{};
-        } else if constexpr (hiddenBase<AsyncInit, C> || hiddenBase<AsyncStart, C>) {
-            return Outcome<InaccessibleAsync<C>>{};
+            return Outcome<InaccessibleBase<C, Conditional>>{};
+        } else if constexpr (hiddenBase<AsyncInit, C>) {
+            return Outcome<InaccessibleBase<C, AsyncInit>>{};
+        } else if constexpr (hiddenBase<AsyncStart, C>) {
+            return Outcome<InaccessibleBase<C, AsyncStart>>{};
         } else if constexpr (std::is_abstract_v<C>) {
             return Outcome<AbstractComponent<C>>{};
         } else {

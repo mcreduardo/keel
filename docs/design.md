@@ -98,8 +98,7 @@ breaks them, at compile time wherever possible.
    class derives publicly from `keel::Provides<T>` or `keel::Alternative<T>` (itself or
    through a base). It never finds a class just because it derives from `T`.
    *Enforced:* if that class is the only candidate, or it would be left out of `All<T>`, you
-   get a compile error (`UndeclaredProvider`, `UndeclaredSubclass`, `LeftOutOfAll`), not a
-   silent miss.
+   get a compile error (`UndeclaredProvider`), not a silent miss.
 
 5. **Order is derived, never written.** Startup and shutdown order come from the
    dependency graph. The order you list components in only breaks ties.

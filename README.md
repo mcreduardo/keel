@@ -167,7 +167,7 @@ top; the CMake build compiles all of them and runs them as tests.
 | [`introspection.cpp`](examples/introspection.cpp) | `initOrder()`, `timings()`, `toDot()` |
 | [`bundles.cpp`](examples/bundles.cpp) | `Bundle`, several compositions, `requireValid`, `isValid` |
 | [`telemetryd.cpp`](examples/telemetryd.cpp) | a small telemetry agent: seven components, no god class |
-| [`compile_errors.cpp`](examples/compile_errors.cpp) | every compile-time check: build with `-DKEEL_ERROR=1` … `48` |
+| [`compile_errors.cpp`](examples/compile_errors.cpp) | every compile-time check: build with `-DKEEL_ERROR=1` … `35` |
 
 ## Requirements
 

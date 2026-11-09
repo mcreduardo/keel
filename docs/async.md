@@ -30,10 +30,10 @@ class FeedHandler : public keel::Component<Config>, public keel::AsyncStart {
 | `keel::AsyncInit` | `init()` (and `enabled()`, for a `keel::Conditional`) run on a thread of their own |
 | `keel::AsyncStart` | `start()` runs on a thread of its own |
 
-Derive from it publicly, once (privately or twice is `InaccessibleAsync`); a subclass of
+Derive from it publicly, once (privately or twice is `InaccessibleBase`); a subclass of
 an async component is async too. It is not a dependency: listing it in
-`keel::Component<...>` is `AsyncAsDependency` (`MisplacedAsync` inside `Optional<...>` or
-another entry), and it doesn't go in `compose<...>`.
+`keel::Component<...>`, alone or inside another entry, is `InvalidDependency`, and it
+doesn't go in `compose<...>`.
 
 ## How the scheduling works
 

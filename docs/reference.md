@@ -169,7 +169,7 @@ Details: [Lifecycle](lifecycle.md), [Inspecting and testing](inspection-and-test
 - **Interfaces nothing refers to are invisible.** keel can't list a class's base classes,
   so it checks a `keel::Provides<I>` or `keel::Alternative<I>` only for an `I` that some
   entry, `getComponent<I>()` or `run(&I::f)` refers to. Otherwise it isn't checked
-  (`NotDerivedFromInterface`, `InaccessibleProvides`, `InaccessibleAlternative`,
-  `ProvidesAndAlternative`) and `toDot()` doesn't show it.
+  (`NotDerivedFromInterface`, `InaccessibleBase`, `ProvidesAndAlternative`) and `toDot()`
+  doesn't show it.
 - `getAll<I>()` returns a new vector per call (call it in `init()`), and the composition
   root has no `getAll`.

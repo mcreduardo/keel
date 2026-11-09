@@ -12,19 +12,8 @@ namespace keel {
 
 namespace detail {
 
-// How an entry uses the type it names. The listed* and misnested kinds are mistakes,
-// reported at compose time.
-enum class Use {
-    required,
-    optional,
-    ordering,
-    listedProvides,
-    listedAlternative,
-    listedAsync,
-    all,
-    optionalAll,
-    misnested
-};
+// How an entry uses the type it names.
+enum class Use { required, optional, ordering, all, optionalAll };
 
 // What an entry of a keel::Component<...> list names (`target`), and how (`use`).
 template <class D, Use U = Use::required>
@@ -37,20 +26,9 @@ struct Split<Optional<T>> : Split<T, Use::optional> {};
 template <class T>
 struct Split<After<T>> : Split<T, Use::ordering> {};
 template <class I>
-struct Split<Provides<I>> : Split<I, Use::listedProvides> {};
-template <class I>
-struct Split<Alternative<I>> : Split<I, Use::listedAlternative> {};
-template <class I>
 struct Split<All<I>> : Split<I, Use::all> {};
 template <class I>
 struct Split<Optional<All<I>>> : Split<I, Use::optionalAll> {};
-// Accessors accept I for it, so MisnestedAll is the one error.
-template <class I>
-struct Split<All<Optional<I>>> : Split<I, Use::misnested> {};
-template <>
-struct Split<AsyncInit> : Split<AsyncInit, Use::listedAsync> {};
-template <>
-struct Split<AsyncStart> : Split<AsyncStart, Use::listedAsync> {};
 
 template <class Entry, Use... uses>
 inline constexpr bool usedAs = ((Split<Entry>::use == uses) || ...);
@@ -65,21 +43,72 @@ struct TargetsOfImpl<TypeList<Entries...>, uses...> {
 template <class Entries, Use... uses>
 using TargetsOf = typename TargetsOfImpl<Entries, uses...>::type;
 
+// Optional, After, All, and the markers that are base classes.
 template <class T>
-inline constexpr bool isAsyncMarker = std::is_same_v<T, AsyncInit> || std::is_same_v<T, AsyncStart>;
-
-template <class T>
-inline constexpr bool isDependencyMarker = Split<T>::use != Use::required;
+inline constexpr bool isMarker = Split<T>::use != Use::required;
+template <class I>
+inline constexpr bool isMarker<Provides<I>> = true;
+template <class I>
+inline constexpr bool isMarker<Alternative<I>> = true;
+template <>
+inline constexpr bool isMarker<AsyncInit> = true;
+template <>
+inline constexpr bool isMarker<AsyncStart> = true;
 
 // A type an entry may name: a class, not cv-qualified, not a marker. Anything else would never match.
 template <class T>
 inline constexpr bool couldBeComponent =
-    std::is_class_v<T> && !std::is_const_v<T> && !std::is_volatile_v<T> && !isDependencyMarker<T>;
+    std::is_class_v<T> && !std::is_const_v<T> && !std::is_volatile_v<T> && !isMarker<T>;
 
 template <class C>
 inline constexpr bool isBundle = false;
 template <class... Cs>
 inline constexpr bool isBundle<Bundle<Cs...>> = true;
+
+// An entry that names a type a component can be or provide; any other is InvalidDependency.
+template <class Entry>
+inline constexpr bool validEntry =
+    couldBeComponent<typename Split<Entry>::target> && !isBundle<typename Split<Entry>::target>;
+template <class... Entries>
+using ValidTargets =
+    Concat<std::conditional_t<validEntry<Entries>, TypeList<typename Split<Entries>::target>, TypeList<>>...>;
+
+// The class an entry is about, under its qualifiers and markers: keel::Optional<const T&> is T.
+template <class T>
+struct StrippedImpl {
+    using type = T;
+};
+template <class T>
+struct StrippedImpl<Optional<T>> : StrippedImpl<std::remove_cvref_t<T>> {};
+template <class T>
+struct StrippedImpl<After<T>> : StrippedImpl<std::remove_cvref_t<T>> {};
+template <class T>
+struct StrippedImpl<All<T>> : StrippedImpl<std::remove_cvref_t<T>> {};
+template <class T>
+struct StrippedImpl<Provides<T>> : StrippedImpl<std::remove_cvref_t<T>> {};
+template <class T>
+struct StrippedImpl<Alternative<T>> : StrippedImpl<std::remove_cvref_t<T>> {};
+template <class T>
+using Stripped = typename StrippedImpl<std::remove_cvref_t<T>>::type;
+
+// T is what an invalid or duplicated entry is about: its accessors leave that one error alone.
+template <class T, class... Entries>
+inline constexpr bool listMistakeOn =
+    ((!validEntry<Entries> && std::is_same_v<Stripped<typename Split<Entries>::target>, Stripped<T>>) || ...) ||
+    (0 + ... + (validEntry<Entries> && std::is_same_v<typename Split<Entries>::target, T> ? 1 : 0)) > 1;
+
+// Of several invalid entries about one type, only the first is reported.
+template <class T, class Entries>
+struct FirstInvalidOnImpl;
+template <class T, class... Entries>
+struct FirstInvalidOnImpl<T, TypeList<Entries...>> {
+    using type = FirstOr<Concat<std::conditional_t<!validEntry<Entries> &&
+                                                       std::is_same_v<Stripped<typename Split<Entries>::target>, T>,
+                                                   TypeList<Entries>, TypeList<>>...>,
+                         void>;
+};
+template <class T, class Entries>
+using FirstInvalidOn = typename FirstInvalidOnImpl<T, Entries>::type;
 
 // A repeated bundle is expanded only the first time, so it is one DuplicateBundle<B>, not a
 // duplicate of each of its components.

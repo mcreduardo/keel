@@ -133,7 +133,7 @@ class Uplink : public keel::Component<Config, Recorder>, public keel::Conditiona
 - The override must be `bool enabled() const`. Another signature (no `const`) doesn't
   override it, and the component stays abstract: `AbstractComponent`, at compile time.
 - Derive publicly, once. Privately (the default for a `class`) or twice is
-  `InaccessibleConditional`.
+  `InaccessibleBase<C, keel::Conditional>`.
 - Only components that derive from `keel::Conditional` are asked. A component that has an
   `enabled()` of its own for another purpose keeps it: keel never calls it.
 - An interface that declares its own `virtual bool enabled() const`, implemented by a
@@ -149,8 +149,8 @@ and the compiler checks that they do:
 | `After<Uplink>` | ordering only, as usual |
 | `Optional<All<I>>` (Uplink provides `I`) | Uplink is left out of `getAll<I>()`, which may become empty |
 | `All<I>` | Uplink is left out of `getAll<I>()`; compiles only if some provider of `I` isn't conditional (`OnlyConditionalProviders`), so the list is never empty |
-| `Uplink` (required) | compile error: `RequiredConditional<Dashboard, Uplink>` |
-| `I`, provided only by Uplink (a `Provides<I>` base) | compile error: `RequiredConditionalProvider<Writer, I, Uplink>` |
+| `Uplink` (required) | compile error: `RequiredConditional<Dashboard, Uplink, Uplink>` |
+| `I`, provided only by Uplink (a `Provides<I>` base) | compile error: `RequiredConditional<Writer, I, Uplink>` |
 | `I`, provided by `Alternative<I>`s | the enabled one; checked at startup (see above) |
 
 This holds for a conditional dependent too: if `Recorder` were conditional, the
