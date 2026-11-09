@@ -124,7 +124,7 @@ breaks them, at compile time wherever possible.
 
 9. **Single-threaded unless a component says otherwise.** Concurrency is opt-in per
    component (`AsyncInit`, `AsyncStart`). Dependency order holds either way, and
-   `setAsync(false)` turns it off for debugging.
+   `disableAsyncForDebugging()` turns it off.
 
 10. **No magic.** No macros to write, no RTTI, no code generation, no registration side
     effects. The component headers and the composition root are the whole story.

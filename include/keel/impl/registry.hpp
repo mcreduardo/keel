@@ -49,9 +49,9 @@ public:
     // Set only when some component is async. ordered(k, m): the k-th component in init order
     // waits for the m-th (m < k).
     void setOrdering(bool (*ordered)(std::size_t, std::size_t)) noexcept { ordered_ = ordered; }
-    void setAsync(bool async) {
-        if (state_ != State::building) throw Error("keel: setAsync() must be called before init()");
-        async_ = async;
+    void disableAsync() {
+        if (state_ != State::building) throw Error("keel: disableAsyncForDebugging() must be called before init()");
+        async_ = false;
     }
 
     void init();
@@ -98,7 +98,7 @@ private:
     bool runsAsync(Phase phase, std::size_t i) const noexcept;
 
     bool (*ordered_)(std::size_t, std::size_t) = nullptr;  // null: no component is async
-    bool async_ = true;      // App::setAsync()
+    bool async_ = true;      // App::disableAsyncForDebugging()
 
     void stopAll() noexcept;
     void deinitAll() noexcept;

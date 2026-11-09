@@ -145,7 +145,7 @@ in about 1 s on top of the standard headers (Apple clang 17, `-O0`, Apple M1).
 | [Lifecycle](docs/lifecycle.md) | `init` / `start` / `stop` / `deinit`, guarantees, failures and rollback, `run` |
 | [Composing an application](docs/composition.md) | `compose`, `App`, constructor arguments, `Bundle`, several compositions |
 | [Decisions at runtime](docs/runtime-decisions.md) | choosing an implementation (a factory, or `Alternative`), `Conditional`, turning a feature off |
-| [Async startup](docs/async.md) | `AsyncInit`, `AsyncStart`, scheduling, thread safety, `setAsync` |
+| [Async startup](docs/async.md) | `AsyncInit`, `AsyncStart`, scheduling, thread safety, `disableAsyncForDebugging` |
 | [Inspecting and testing](docs/inspection-and-testing.md) | `requireValid`, `isValid`, init order, timings, the DOT graph, testing with fakes |
 | [Errors](docs/errors.md) | every compile-time diagnostic with its fix, and every runtime `keel::Error` |
 | [Patterns](docs/patterns.md) | shutdown on a signal, several instances of a class, role interfaces, null objects, fakes |
@@ -163,7 +163,7 @@ top; the CMake build compiles all of them and runs them as tests.
 | [`interfaces.cpp`](examples/interfaces.cpp) | `Provides`, `All`, `Optional<All>`, build variants, a test with fakes |
 | [`lifecycle.cpp`](examples/lifecycle.cpp) | `init`/`start`/`stop`/`deinit`, `After`, `run`, rollback of a failed start |
 | [`runtime_choices.cpp`](examples/runtime_choices.cpp) | a factory component, `Conditional`, `Alternative`, `keel::run` with a member function |
-| [`async.cpp`](examples/async.cpp) | `AsyncInit`, `AsyncStart`, `setAsync(false)` |
+| [`async.cpp`](examples/async.cpp) | `AsyncInit`, `AsyncStart`, `disableAsyncForDebugging()` |
 | [`introspection.cpp`](examples/introspection.cpp) | `initOrder()`, `timings()`, `toDot()` |
 | [`bundles.cpp`](examples/bundles.cpp) | `Bundle`, several compositions, `requireValid`, `isValid` |
 | [`telemetryd.cpp`](examples/telemetryd.cpp) | a small telemetry agent: seven components, no god class |

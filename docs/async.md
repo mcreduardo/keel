@@ -104,12 +104,12 @@ If an `init()` (or a `keel::Conditional`'s `enabled()`, or `start()`) throws:
 A thread that can't be created counts as a failure of its component
 (`std::system_error`).
 
-## Debugging: `setAsync(false)`
+## Debugging: `disableAsyncForDebugging()`
 
 ```cpp
 ServerApp app;
-app.setAsync(false);  // before init(); afterwards it throws keel::Error
-app.init();           // everything on this thread, in init order
+app.disableAsyncForDebugging();  // before init(); afterwards it throws keel::Error
+app.init();                      // everything on this thread, in init order
 ```
 
 It runs every component on the calling thread, as if none derived from `AsyncInit` or

@@ -789,12 +789,12 @@ TEST(async_base_classes_are_inherited) {
 }
 
 // ---------------------------------------------------------------------------
-// setAsync(false)
+// disableAsyncForDebugging()
 
-TEST(set_async_false_runs_everything_on_the_calling_thread) {
+TEST(disabled_async_runs_everything_on_the_calling_thread) {
     inRounds([] {
         running::ServerApp app;
-        app.setAsync(false);
+        app.disableAsyncForDebugging();
         app.init();
         app.start();
         CHECK(onMainThread("init Database"));
@@ -804,11 +804,11 @@ TEST(set_async_false_runs_everything_on_the_calling_thread) {
                                                            "start Config", "start Database", "start Server"}));
         std::string error;
         try {
-            app.setAsync(true);
+            app.disableAsyncForDebugging();
         } catch (const keel::Error& e) {
             error = e.what();
         }
-        CHECK(error == "keel: setAsync() must be called before init()");
+        CHECK(error == "keel: disableAsyncForDebugging() must be called before init()");
     });
 }
 

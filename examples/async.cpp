@@ -81,7 +81,7 @@ using Server = keel::App<HttpServer, Metrics, Database, Cache, Config, AuditLog,
 
 int main(int argc, char** argv) try {
     Server app;
-    if (argc > 1 && std::strcmp(argv[1], "--sync") == 0) app.setAsync(false);  // before init()
+    if (argc > 1 && std::strcmp(argv[1], "--sync") == 0) app.disableAsyncForDebugging();  // before init()
 
     const auto begin = std::chrono::steady_clock::now();
     std::printf("init:\n");

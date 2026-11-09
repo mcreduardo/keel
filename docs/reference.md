@@ -81,7 +81,7 @@ Details: [Composing an application](composition.md).
 | `void deinit() noexcept` | stops if needed, then `deinit()` in reverse order; also run by the destructor |
 | `decltype(auto) run(fn)` | init, start, `fn`, stop, deinit; returns `fn`'s result. `fn`: no arguments, the App, or `&C::f` |
 | `T& getComponent<T>()` | a component, or the one provider of an interface (before `init()` too, except alternatives; after it, a disabled one throws) |
-| `void setAsync(bool)` | `false`: run async components on the calling thread; before `init()` |
+| `void disableAsyncForDebugging()` | run async components on the calling thread, in init order (for debugging); before `init()` |
 | `static constexpr std::array<std::string_view, N> initOrder()` | component names in init order |
 | `std::span<const keel::Timing> timings() const` | one entry per lifecycle call that ran |
 | `std::string toDot() const` | the dependency graph in Graphviz DOT format |

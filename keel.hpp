@@ -1511,9 +1511,9 @@ public:
     // Set only when some component is async. ordered(k, m): the k-th component in init order
     // waits for the m-th (m < k).
     void setOrdering(bool (*ordered)(std::size_t, std::size_t)) noexcept { ordered_ = ordered; }
-    void setAsync(bool async) {
-        if (state_ != State::building) throw Error("keel: setAsync() must be called before init()");
-        async_ = async;
+    void disableAsync() {
+        if (state_ != State::building) throw Error("keel: disableAsyncForDebugging() must be called before init()");
+        async_ = false;
     }
 
     void init();
@@ -1560,7 +1560,7 @@ private:
     bool runsAsync(Phase phase, std::size_t i) const noexcept;
 
     bool (*ordered_)(std::size_t, std::size_t) = nullptr;  // null: no component is async
-    bool async_ = true;      // App::setAsync()
+    bool async_ = true;      // App::disableAsyncForDebugging()
 
     void stopAll() noexcept;
     void deinitAll() noexcept;
@@ -2085,8 +2085,8 @@ public:
 
     /// Calls init() on every component in dependency order; rolls back and rethrows on failure.
     void init() { registry_.init(); }
-    /// false runs every component on the calling thread; call before init().
-    void setAsync(bool async) { registry_.setAsync(async); }
+    /// Runs every component on the calling thread, in init order (to debug, e.g. a race); before init().
+    void disableAsyncForDebugging() { registry_.disableAsync(); }
     /// Calls start() on every enabled component in dependency order; rolls back on failure.
     void start() { registry_.start(); }
     /// Calls stop() on every started component, in reverse order.

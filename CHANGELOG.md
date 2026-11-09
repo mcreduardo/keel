@@ -9,6 +9,9 @@ may change the API.
 
 ### Changed
 
+- `App::setAsync(false)` is `App::disableAsyncForDebugging()`. There is no way to turn async
+  back on (it is the default); after `init()` it throws
+  `keel: disableAsyncForDebugging() must be called before init()`.
 - Merged diagnostics (what compiles is unchanged; one error per mistake as before):
   - `InvalidDependency<C, Entry>` now also covers what were `ProvidesAsDependency`,
     `AlternativeAsDependency`, `AsyncAsDependency`, `MisplacedAsync`, `BundleAsDependency`,

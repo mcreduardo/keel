@@ -382,7 +382,7 @@ thrown for:
 | the root asks for an alternative while `init()` runs, before it has chosen | `keel: getComponent<Cache>(): init() hasn't chosen among its alternatives yet (RedisCache, MemoryCache)` |
 | `init()` twice, or `run()` after `init()` | `keel: init() can be called only once per App` |
 | `start()` before `init()` (or while it runs), while `start()` runs, twice, after `stop()`, after a failed startup, after `deinit()` | `keel: start() called before init()`, ... |
-| `setAsync()` after `init()` | `keel: setAsync() must be called before init()` |
+| `disableAsyncForDebugging()` after `init()` | `keel: disableAsyncForDebugging() must be called before init()` |
 
 The alternatives' failures (none or several enabled) are the only dependency problems
 left to `init()`. They are thrown before the dependent's `init()` runs, with

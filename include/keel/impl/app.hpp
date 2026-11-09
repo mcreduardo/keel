@@ -90,8 +90,8 @@ public:
 
     /// Calls init() on every component in dependency order; rolls back and rethrows on failure.
     void init() { registry_.init(); }
-    /// false runs every component on the calling thread; call before init().
-    void setAsync(bool async) { registry_.setAsync(async); }
+    /// Runs every component on the calling thread, in init order (to debug, e.g. a race); before init().
+    void disableAsyncForDebugging() { registry_.disableAsync(); }
     /// Calls start() on every enabled component in dependency order; rolls back on failure.
     void start() { registry_.start(); }
     /// Calls stop() on every started component, in reverse order.

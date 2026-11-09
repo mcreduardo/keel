@@ -158,5 +158,5 @@ replace it.
 A component that lists `All<I>` needs at least one provider in the test too; a one-line
 fake is enough (`examples/interfaces.cpp` does this with `FakeHealth`).
 
-For tests of async components, `app.setAsync(false)` runs everything on the test's thread,
-in init order ([Async startup](async.md#debugging-setasyncfalse)).
+For tests of async components, `app.disableAsyncForDebugging()` runs everything on the
+test's thread, in init order ([Async startup](async.md#debugging-disableasyncfordebugging)).
