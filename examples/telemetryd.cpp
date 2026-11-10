@@ -12,6 +12,8 @@
 // Try it:
 //   - remove WorkerPool from the composition at the bottom: compile error,
 //     MissingDependency<Aggregator, WorkerPool>;
+//   - remove any entry from a component's keel::Component<...> list: compile error at the
+//     getComponent<T>() call that uses it (every component uses everything it lists);
 //   - call getComponent<DeviceManager>() inside Exporter: compile error, Exporter
 //     doesn't list DeviceManager.
 #include "keel.hpp"
@@ -69,18 +71,21 @@ private:
 // --- Config: settings loaded from the file CliArgs points to ------------------
 class Config : public keel::Component<CliArgs> {
 public:
+    const std::string& path() const { return path_; }
     const std::vector<std::string>& devices() const { return devices_; }
     int workers() const { return workers_; }
     const std::string& endpoint() const { return endpoint_; }
 
 private:
     void init() override {
-        // A real agent parses getComponent<CliArgs>().configPath(). Fixed values here.
+        path_ = getComponent<CliArgs>().configPath();
+        // A real agent parses the file at path_. Fixed values here.
         devices_ = {"imu0", "gps0", "baro0"};
         workers_ = 2;
         endpoint_ = "collector.local:9000";
     }
 
+    std::string path_;
     std::vector<std::string> devices_;
     int workers_ = 1;
     std::string endpoint_;
@@ -95,7 +100,7 @@ public:
     }
 
 private:
-    void init() override { info("logger up"); }
+    void init() override { info("logger up, config " + getComponent<Config>().path()); }
     void deinit() noexcept override { info("logger down"); }
 
     mutable std::mutex mutex_;
@@ -195,6 +200,7 @@ private:
     void init() override {
         devices_ = &getComponent<DeviceManager>();
         pool_ = &getComponent<WorkerPool>();
+        getComponent<Logger>().info("aggregating " + std::to_string(devices_->count()) + " devices");
     }
 
     DeviceManager* devices_ = nullptr;
