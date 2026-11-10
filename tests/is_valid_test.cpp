@@ -83,6 +83,7 @@ class MemoryStorage : public keel::Component<>, public keel::Provides<Storage>, 
 class UsesStorage : public keel::Component<Storage> {};
 class MaybeStorage : public keel::Component<keel::Optional<Storage>> {};
 class AfterStorage : public keel::Component<keel::After<Storage>> {};
+class AfterAllStorage : public keel::Component<keel::After<keel::All<Storage>>> {};
 class NotStorage : public keel::Component<>, public keel::Provides<Storage> {};
 struct StorageReader : Storage {};
 struct StorageWriter : Storage {};
@@ -93,7 +94,11 @@ class UndeclaredStorage : public keel::Component<>, public Storage {};
 
 static_assert(keel::isValid<UsesStorage, DiskStorage>);
 static_assert(keel::isValid<MaybeStorage>);                               // absent optional
-static_assert(keel::isValid<AfterStorage, DiskStorage, MemoryStorage>);  // after both
+static_assert(keel::isValid<AfterStorage, DiskStorage>);
+static_assert(keel::isValid<AfterStorage>);                                 // absent ordering
+static_assert(!keel::isValid<AfterStorage, DiskStorage, MemoryStorage>);   // after which one?
+static_assert(keel::isValid<AfterAllStorage, DiskStorage, MemoryStorage>);  // after both
+static_assert(keel::isValid<AfterAllStorage>);                              // none is fine
 static_assert(keel::isValid<DiskStorage, MemoryStorage>);                // nothing needs one
 static_assert(!keel::isValid<UsesStorage>);
 static_assert(!keel::isValid<UsesStorage, DiskStorage, MemoryStorage>);
@@ -111,6 +116,8 @@ static_assert(keel::isValid<PrivateStorage>);
 static_assert(!keel::isValid<UsesStorage, UndeclaredStorage>);
 static_assert(!keel::isValid<MaybeStorage, UndeclaredStorage>);
 static_assert(!keel::isValid<AfterStorage, UndeclaredStorage>);
+static_assert(!keel::isValid<AfterAllStorage, DiskStorage, UndeclaredStorage>);
+static_assert(!keel::isValid<AfterAllStorage, NotStorage>);
 
 class Clock : public keel::Component<> {};
 class FakeClock : public Clock {};
@@ -129,6 +136,7 @@ class MemoryCache : public keel::Component<>, public keel::Alternative<Cache>, p
 };
 class PlainCache : public keel::Component<>, public keel::Provides<Cache>, public Cache {};
 class UsesCache : public keel::Component<Cache> {};
+class AfterCache : public keel::Component<keel::After<Cache>> {};
 class MaybeCache : public keel::Component<keel::Optional<Cache>> {};
 class AnyCaches : public keel::Component<keel::Optional<keel::All<Cache>>> {};
 class AllCaches : public keel::Component<keel::All<Cache>> {};
@@ -139,6 +147,8 @@ static_assert(keel::isValid<AnyCaches, RedisCache, MemoryCache>);
 static_assert(!keel::isValid<AllCaches, RedisCache, MemoryCache>);  // every provider is conditional
 static_assert(keel::isValid<AllCaches, RedisCache, PlainCache>);    // PlainCache is always there
 static_assert(!keel::isValid<UsesCache, RedisCache, PlainCache>);
+static_assert(keel::isValid<AfterCache, RedisCache, MemoryCache>);  // chosen at runtime: after each
+static_assert(!keel::isValid<AfterCache, RedisCache, PlainCache>);
 static_assert(keel::isValid<RedisCache, PlainCache>);  // nothing needs one Cache
 // An alternative of keel::Conditional itself, next to a dependency on keel::Conditional:
 // the passed checks of the two are distinct (isValid and compose agree).
@@ -244,12 +254,33 @@ static_assert(!keel::isValid<AnyChecks, LeftOutCheck>);
 static_assert(!keel::isValid<AllChecks, ConditionalCheck>);
 static_assert(keel::isValid<AllChecks, ConditionalCheck, DatabaseCheck>);
 static_assert(keel::isValid<AnyChecks, ConditionalCheck>);
-// A composite that provides HealthCheck itself doesn't count for its own All<HealthCheck>:
-// the only other provider is conditional.
+// A provider of HealthCheck that lists a collection of HealthCheck depends on itself: a cycle,
+// whatever the other providers are. So does a subclass that inherits both.
 class CompositeCheck : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>,
                        public HealthCheck {};
+class SubCompositeCheck : public CompositeCheck {};
+class OptionalCompositeCheck : public keel::Component<keel::Optional<keel::All<HealthCheck>>>,
+                               public keel::Provides<HealthCheck>, public HealthCheck {};
+class AfterCheck : public keel::Component<keel::After<HealthCheck>>, public keel::Provides<HealthCheck>,
+                   public HealthCheck {};
+class AfterAllCheck : public keel::Component<keel::After<keel::All<HealthCheck>>>,
+                      public keel::Provides<HealthCheck>, public HealthCheck {};
+static_assert(!keel::isValid<CompositeCheck>);
 static_assert(!keel::isValid<CompositeCheck, ConditionalCheck>);
-static_assert(keel::isValid<CompositeCheck, ConditionalCheck, DatabaseCheck>);
+static_assert(!keel::isValid<CompositeCheck, ConditionalCheck, DatabaseCheck>);
+static_assert(!keel::isValid<SubCompositeCheck, DatabaseCheck>);
+static_assert(!keel::isValid<OptionalCompositeCheck>);
+static_assert(!keel::isValid<AfterCheck>);
+static_assert(!keel::isValid<AfterCheck, DatabaseCheck>);  // a cycle, not an ambiguity
+static_assert(!keel::isValid<AfterAllCheck>);
+static_assert(!keel::isValid<AfterAllCheck, DatabaseCheck>);
+// The aggregator provides another interface instead.
+struct HealthReport {
+    virtual ~HealthReport() = default;
+};
+class ReportCheck : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthReport>,
+                    public HealthReport {};
+static_assert(keel::isValid<ReportCheck, DatabaseCheck>);
 static_assert(!keel::isValid<MisnestedChecks, DatabaseCheck>);
 
 // Cycles.

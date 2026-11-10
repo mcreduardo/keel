@@ -99,6 +99,23 @@ Fix: break the cycle. Usually one direction is a call that should be a callback 
 interface owned by the lower component, or two components that should be one. Every kind
 of entry orders (required, `Optional`, `After`, `All`), so each can close a cycle.
 
+A component that provides `I` and lists `I` in any form (`I`, `Optional<I>`, `After<I>`,
+`All<I>`, `Optional<All<I>>`, `After<All<I>>`) depends on itself:
+`DependencyCycle<TypeList<C>>`, whatever the other providers of `I` (with a second
+provider it is a cycle, not `AmbiguousDependency`). Its subclasses inherit both. So does
+`After<C>` in `C` itself. An aggregator of `I` provides
+another interface instead (see
+[Collections](dependencies.md#collections-keelalli-and-keeloptionalkeelalli)):
+
+```cpp
+class AllChecks : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>,
+                  public HealthCheck {};
+keel::compose<AllChecks, Database>();  // DependencyCycle<TypeList<AllChecks>>
+
+class HealthSummary : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthReport>,
+                      public HealthReport {};  // fine
+```
+
 **`InvalidDependency<C, Entry>`** (8). An entry of a component's list isn't a dependency:
 
 - a keel marker that is a base class: `keel::Provides<I>`, `keel::Alternative<I>`,
@@ -110,7 +127,7 @@ of entry orders (required, `Optional`, `After`, `All`), so each can close a cycl
 - `keel::All<keel::Optional<I>>`. Fix: write `keel::Optional<keel::All<I>>` for a list that
   may be empty.
 - a type no dependency can name: not a class, `const` or `volatile`, a reference, or itself
-  a marker (`keel::Optional<keel::AsyncInit>`, `keel::After<keel::All<I>>`, ...). Fix: name
+  a marker (`keel::Optional<keel::AsyncInit>`, `keel::After<keel::Optional<I>>`, ...). Fix: name
   the plain class, e.g. `keel::Optional<Metrics>`. A dependency is accessed as `T&` or `T*`
   already; constness is up to the code that uses it.
 
@@ -122,8 +139,8 @@ Several invalid entries about one type (`keel::After<Core>` and `Core`, or the s
 twice) are one error, at the first. A lookup of that type adds no error; lookups of other
 types are checked as usual.
 
-**A dependency listed twice** (9). `T`, `Optional<T>`, `After<T>`, `All<T>` and
-`Optional<All<T>>` all name `T`; two of them in one list is an error.
+**A dependency listed twice** (9). `T`, `Optional<T>`, `After<T>`, `All<T>`,
+`Optional<All<T>>` and `After<All<T>>` all name `T`; two of them in one list is an error.
 
 ```cpp
 class Server : public keel::Component<Logger, keel::Optional<Logger>> {};
@@ -171,8 +188,9 @@ from it again (a subclass inherits it). `keel::Conditional`, `keel::AsyncInit` a
 `keel::AsyncStart` are checked for every composed component; `Provides<I>` and
 `Alternative<I>` only for an `I` something refers to.
 
-**`AmbiguousDependency<C, I, TypeList<Providers...>>`** (12). `C` needs one `I`, and
-several composed components are or provide it.
+**`AmbiguousDependency<C, I, TypeList<Providers...>>`** (12). `C` needs one `I` (it lists
+`I`, `Optional<I>` or `After<I>`), and several composed components are or provide it. (If
+`C` is one of them, it is a `DependencyCycle` instead.)
 
 ```cpp
 class Service : public keel::Component<Storage> {};
@@ -182,7 +200,8 @@ keel::compose<Service, DiskStorage, MemoryStorage>();
 
 Fix, depending on what you mean: compose only one; depend on the one you want by its
 own type (or a [role interface](patterns.md#picking-one-of-several-providers-role-interfaces));
-use every provider with `keel::All<I>`; or let configuration choose: make each one a
+use every provider with `keel::All<I>` (come after every provider with
+`keel::After<keel::All<I>>`); or let configuration choose: make each one a
 `keel::Alternative<I>` and a `keel::Conditional`, and enable one at runtime (or create the
 configured one in a single component: see
 [Decisions at runtime](runtime-decisions.md#choose-an-implementation)).
@@ -195,7 +214,8 @@ Fix: make every provider an `Alternative<I>` and a `keel::Conditional` (a do-not
 default is an alternative too), or compose only one.
 
 **`UndeclaredProvider<C, T, Derived>`** (14). `C` depends on `T` (required, `Optional`,
-`After`, `All` or `Optional<All>`), and `Derived` derives from `T` without providing it.
+`After`, `All`, `Optional<All>` or `After<All>`), and `Derived` derives from `T` without
+providing it.
 keel matches exact types, so `Derived` would never be found: a missing dependency, or a
 component silently left out of `All<T>`.
 
@@ -216,7 +236,7 @@ itself a component, compose `T`, or derive `T` from `keel::Provides<T>`
 subclasses inherit it; or depend on `Derived`.
 
 **`MissingProvider<C, I>`** (15). `C` lists `keel::All<I>`, which needs at least one
-provider, and no composed component (other than `C`) is or provides `I`.
+provider, and no composed component is or provides `I`.
 
 Fix: compose a provider, or depend on `keel::Optional<keel::All<I>>` if none is fine.
 
@@ -256,6 +276,7 @@ accessor to use instead.
 | `getAll<I>()` on a required `I` (21), `Optional<I>` or `After<I>` | `I is a required dependency (one provider); use getComponent<I>(), or replace it with keel::All<I> ...` | `getComponent`/`findComponent`, or list `All<I>` |
 | `getAll<I>()` without `All<I>` | `getAll<I>() requires keel::All<I> or keel::Optional<keel::All<I>> ...` | list one of them |
 | `getComponent<T>()`/`findComponent<T>()` on `All<T>` | `T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()` | `getAll<T>()` |
+| any accessor on `After<All<T>>` | `T is declared keel::After<keel::All<T>>, which is ordering only; replace it with keel::All<T> ...` | list `All<T>` (or `Optional<All<T>>`) and use `getAll<T>()` |
 | `getComponent<keel::AsyncInit>()` (also `Provides<I>`, `Alternative<I>`, `AsyncStart`; any accessor) | `keel::Provides<I>, keel::Alternative<I>, keel::AsyncInit and keel::AsyncStart are base classes, not dependencies` | nothing to look up |
 | `stop()` or `deinit()` without `noexcept` (22) | the compiler's own: `exception specification of overriding function is more lax than base version` | add `noexcept` |
 

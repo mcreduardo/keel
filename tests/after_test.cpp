@@ -2,7 +2,9 @@
 
 #include "check.hpp"
 
+#include <array>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -96,4 +98,73 @@ TEST(after_may_name_an_incomplete_type) {
     events.clear();
     { auto app = keel::compose<Patient>(); }
     CHECK((events == std::vector<std::string>{"+P", "-P"}));
+}
+
+// ---------------------------------------------------------------------------
+// After<I> on an interface: its one provider. After<All<I>>: every provider, possibly none.
+
+namespace {
+
+struct Sink {
+    virtual ~Sink() = default;
+};
+
+template <char Name>
+class SinkPart : public Part<Name>, public keel::Provides<Sink>, public Sink {};
+
+using FileSink = SinkPart<'F'>;
+using NetSink = SinkPart<'N'>;
+using Flusher = Part<'X', keel::After<Sink>>;
+using Closer = Part<'Z', keel::After<keel::All<Sink>>>;
+
+}  // namespace
+
+TEST(after_an_interface_orders_after_its_provider) {
+    events.clear();
+    { auto app = keel::compose<Flusher, FileSink>(); }
+    CHECK((events == std::vector<std::string>{"+F", "+X", "-X", "-F"}));
+}
+
+TEST(after_all_orders_after_every_provider) {
+    events.clear();
+    {
+        auto app = keel::compose<Closer, FileSink, Database, NetSink>();
+        app.init();
+        CHECK((app.initOrder() == std::array<std::string_view, 4>{keel::typeName<FileSink>(),
+                                                                  keel::typeName<Database>(),
+                                                                  keel::typeName<NetSink>(),
+                                                                  keel::typeName<Closer>()}));
+    }
+    CHECK((events == std::vector<std::string>{"+F", "+D", "+N", "+Z", "init F", "init D", "init N", "init Z",
+                                              "deinit Z", "deinit N", "deinit D", "deinit F", "-Z", "-N", "-D",
+                                              "-F"}));
+}
+
+TEST(after_all_without_a_provider_is_ignored) {
+    events.clear();
+    { auto app = keel::compose<Closer, Database>(); }
+    CHECK((events == std::vector<std::string>{"+Z", "+D", "-D", "-Z"}));
+}
+
+namespace {
+
+// Alternatives: configuration chooses one at runtime, so After<Sink> comes after each.
+template <char Name, bool on>
+class AlternativeSink : public Part<Name>, public keel::Alternative<Sink>, public Sink, public keel::Conditional {
+    bool enabled() const override { return on; }
+};
+
+using LocalSink = AlternativeSink<'L', false>;
+using RemoteSink = AlternativeSink<'R', true>;
+
+}  // namespace
+
+TEST(after_an_interface_with_alternatives_orders_after_each) {
+    events.clear();
+    {
+        auto app = keel::compose<Flusher, LocalSink, RemoteSink>();
+        app.init();
+    }
+    CHECK((events == std::vector<std::string>{"+L", "+R", "+X", "init R", "init X", "deinit X", "deinit R", "-X",
+                                              "-R", "-L"}));
 }

@@ -171,7 +171,7 @@ inline const std::vector<Binding>& ComponentBase::lookupAll(TypeId id, std::stri
 }
 
 inline void* ComponentBase::useIfEnabled(const Binding& b, std::string_view dependency) const {
-    if (b.owner == this || b.owner->state_ == State::disabled) return nullptr;
+    if (b.owner->state_ == State::disabled) return nullptr;
     return use(b, dependency);
 }
 

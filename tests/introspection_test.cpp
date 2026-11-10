@@ -302,6 +302,18 @@ TEST(to_dot_shows_the_interfaces_something_refers_to) {
            std::vector<std::string>{"intro::Flash\nprovides intro::Gauge", "intro::AfterFlash", "intro::Gauge"}));
 }
 
+namespace intro {
+class Pong : public keel::Component<>, public keel::Provides<Check>, public Check {};
+class Shutdown : public keel::Component<keel::After<keel::All<Check>>> {};  // ordering only
+}  // namespace intro
+
+TEST(to_dot_draws_after_all_like_after_to_every_provider) {
+    using namespace intro;
+    const std::string dot = keel::compose<Shutdown, Ping, Pong>().toDot();
+    CHECK(dot.find(R"(n0 -> n1 [style=dotted, arrowhead=empty, label="intro::Check"];)") != std::string::npos);
+    CHECK(dot.find(R"(n0 -> n2 [style=dotted, arrowhead=empty, label="intro::Check"];)") != std::string::npos);
+}
+
 TEST(to_dot_escapes_names) {
     using namespace intro;
     using Quote = Tag<'"'>;

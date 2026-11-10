@@ -17,6 +17,10 @@ show up in compile errors, not in your code.
 | `keel::After<T>` | ordering only |
 | `keel::All<I>` | every provider of `I`, at least one |
 | `keel::Optional<keel::All<I>>` | every provider of `I`, possibly none |
+| `keel::After<keel::All<I>>` | ordering only, after every provider of `I`, possibly none |
+
+`T`, `Optional<T>` and `After<T>` name one `T`: two providers are an error. A provider of
+`I` can't list `I` in any form: that is a cycle, whatever the other providers.
 
 What a component is goes in its other base classes:
 
@@ -33,7 +37,7 @@ The listed types may be incomplete in the component's header. Details:
 
 A component that configuration may turn off also derives from `keel::Conditional`
 (publicly) and overrides `bool enabled() const`. Nothing may require it: dependents list
-`Optional<T>`, `After<T>` or `Optional<All<I>>`. Details:
+`Optional<T>`, `After<T>`, `Optional<All<I>>` or `After<All<I>>`. Details:
 [Decisions at runtime](runtime-decisions.md).
 
 ### Inside a component

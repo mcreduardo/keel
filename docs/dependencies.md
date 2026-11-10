@@ -14,6 +14,7 @@ What a component **needs** goes in its `keel::Component<...>` list, and only tha
 | `keel::After<T>` | **Ordering only.** Come after `T` if `T` is composed. | none |
 | `keel::All<I>` | **Every** provider of `I`, **at least one**. | `getAll<I>()` returns `std::vector<I*>`, never empty |
 | `keel::Optional<keel::All<I>>` | Every provider of `I`, **possibly none**. | `getAll<I>()`, possibly empty |
+| `keel::After<keel::All<I>>` | **Ordering only**, after every provider of `I`, possibly none. | none |
 
 | You derive from | Meaning | Effect |
 |---|---|---|
@@ -25,8 +26,8 @@ What a component **needs** goes in its `keel::Component<...>` list, and only tha
 "Comes first" means constructed and initialized before this component, and deinitialized
 and destroyed after it.
 
-**One entry per type.** `T`, `Optional<T>`, `After<T>`, `All<T>` and
-`Optional<All<T>>` all name `T`, so two of them in one list is an error. Each entry has
+**One entry per type.** `T`, `Optional<T>`, `After<T>`, `All<T>`, `Optional<All<T>>` and
+`After<All<T>>` all name `T`, so two of them in one list is an error. Each entry has
 exactly one accessor, and the wrong one is a compile error that names the right one:
 `getComponent<T>()` on an `Optional<T>` says to use `findComponent<T>()`.
 
@@ -82,8 +83,13 @@ class HttpServer : public keel::Component<Router, keel::After<Migrations>> {
 
 `After<T>` gives no access (`getComponent<Migrations>()` doesn't compile; the error
 says to replace `After<Migrations>` with `Migrations`). It orders construction and
-destruction too. If `T` isn't composed, nothing happens, like systemd's `After=`. For an
-interface `I`, `After<I>` comes after every provider of `I`.
+destruction too. If `T` isn't composed, nothing happens, like systemd's `After=`.
+
+For an interface `I`, `After<I>` names one `I`, like `I` and `Optional<I>`: it comes after
+the provider of `I`, and two providers are `AmbiguousDependency` (unless they are
+alternatives, chosen at runtime: then it comes after each). To come after every provider,
+list `keel::After<keel::All<I>>`; no provider is fine there too. A provider of `I` can't
+list either (a cycle, see [Collections](#collections-keelalli-and-keeloptionalkeelalli)).
 
 ## Interfaces: `keel::Provides<I>`
 
@@ -116,7 +122,8 @@ auto app = keel::compose<Service, DiskStorage, Config>();
   or the dependent asks for a specific one through a
   [role interface](patterns.md#picking-one-of-several-providers-role-interfaces).
 - Several providers of an interface are fine in themselves. A component that wants all of
-  them lists `keel::All<I>` (below). The error appears only where one `I` is needed.
+  them lists `keel::All<I>` (below). The error appears only where one `I` is needed
+  (`I`, `Optional<I>` or `After<I>`).
 - A component may provide several interfaces: one `keel::Provides<>` base per interface.
 - It must derive publicly and unambiguously from each one (else
   `NotDerivedFromInterface<C, I>`), and from each `keel::Provides<I>` publicly and once
@@ -221,9 +228,28 @@ class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {
   rendering, if that's how they depend on each other. It returns a new vector per call:
   call it in `init()` and keep it.
 - Every provider comes before the component that lists the collection.
-- **A component is not part of its own list.** A composite (a `HealthCheck` that checks
-  all the others) derives from `Provides<HealthCheck>`, lists `All<HealthCheck>`, and gets
-  the others; it is ordered after them.
+- **A provider of `I` can't list a collection of `I`.** It would be in its own list, and
+  come after itself: `DependencyCycle<TypeList<C>>`. The same goes for every entry on `I`
+  (`I`, `Optional<I>`, `After<I>`, `Optional<All<I>>`, `After<All<I>>`), whatever the other
+  providers, and for a subclass that inherits both. "After the other providers of my own
+  interface" can't be written either. An aggregator (a summary of all the health checks)
+  provides another interface:
+
+  ```cpp
+  struct HealthReport {
+      virtual ~HealthReport() = default;
+      virtual bool allHealthy() const = 0;
+  };
+
+  class HealthSummary : public keel::Component<keel::All<HealthCheck>>,
+                        public keel::Provides<HealthReport>, public HealthReport {
+  public:
+      bool allHealthy() const override;  // asks every HealthCheck
+  };
+  ```
+
+  What needs the summary depends on `HealthReport`; what is one more check provides
+  `HealthCheck`.
 - Providers that configuration turned off (a disabled
   [`keel::Conditional`](runtime-decisions.md#keelconditional-a-component-that-may-be-off))
   are left out. So that an `All<I>` is never empty, at least one provider must not be
@@ -232,4 +258,6 @@ class HealthEndpoint : public keel::Component<keel::All<HealthCheck>> {
 - **Nothing is left out silently.** A composed class that derives from `I` without
   providing it would be missing from the list, so it is a compile error:
   `UndeclaredProvider<HealthEndpoint, HealthCheck, Cache>`.
+- `keel::After<keel::All<I>>` orders after every provider (enabled or not), possibly none,
+  and gives no access, like `After<T>`.
 - `All<Optional<I>>` is `InvalidDependency`, with a hint to write `Optional<All<I>>`.

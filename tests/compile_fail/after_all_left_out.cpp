@@ -1,12 +1,12 @@
-// Must not compile: keel::After<keel::All<Plugin>> could never match; keel::After<Plugin>
-// already orders after every provider.
+// Must not compile: Spellcheck derives from Plugin without keel::Provides<Plugin>, so
+// keel::After<keel::All<Plugin>> would silently not wait for it.
 #include <keel.hpp>
 
 struct Plugin {
     virtual ~Plugin() = default;
 };
 
-class Spellcheck : public keel::Component<>, public keel::Provides<Plugin>, public Plugin {};
+class Spellcheck : public keel::Component<>, public Plugin {};
 
 class PluginMenu : public keel::Component<keel::After<keel::All<Plugin>>> {};
 

@@ -147,6 +147,7 @@ and the compiler checks that they do:
 |---|---|
 | `Optional<Uplink>` | `findComponent<Uplink>()` returns `nullptr` while Uplink is disabled |
 | `After<Uplink>` | ordering only, as usual |
+| `After<All<I>>` (Uplink provides `I`) | ordering only, after Uplink too |
 | `Optional<All<I>>` (Uplink provides `I`) | Uplink is left out of `getAll<I>()`, which may become empty |
 | `All<I>` | Uplink is left out of `getAll<I>()`; compiles only if some provider of `I` isn't conditional (`OnlyConditionalProviders`), so the list is never empty |
 | `Uplink` (required) | compile error: `RequiredConditional<Dashboard, Uplink, Uplink>` |

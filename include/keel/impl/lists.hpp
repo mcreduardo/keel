@@ -13,7 +13,7 @@ namespace keel {
 namespace detail {
 
 // How an entry uses the type it names.
-enum class Use { required, optional, ordering, all, optionalAll };
+enum class Use { required, optional, ordering, all, optionalAll, orderingAll };
 
 // What an entry of a keel::Component<...> list names (`target`), and how (`use`).
 template <class D, Use U = Use::required>
@@ -29,6 +29,8 @@ template <class I>
 struct Split<All<I>> : Split<I, Use::all> {};
 template <class I>
 struct Split<Optional<All<I>>> : Split<I, Use::optionalAll> {};
+template <class I>
+struct Split<After<All<I>>> : Split<I, Use::orderingAll> {};
 
 template <class Entry, Use... uses>
 inline constexpr bool usedAs = ((Split<Entry>::use == uses) || ...);

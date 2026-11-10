@@ -7,6 +7,11 @@ may change the API.
 
 ## Unreleased
 
+### Added
+
+- `keel::After<keel::All<I>>`: ordering only, after every provider of `I` (possibly none).
+  Accessors on it are compile errors, as on `keel::After<T>`. It was `InvalidDependency`.
+
 ### Changed
 
 - On MSVC, most compile errors now show the real types (`MissingDependency<Server, Logger>`)
@@ -33,6 +38,20 @@ may change the API.
 
 ### Fixed
 
+- **Breaking:** `keel::After<I>` with several providers of `I` (not alternatives) is
+  `AmbiguousDependency<C, I, TypeList<...>>`, as for `I` and `keel::Optional<I>`; it ordered
+  after all of them silently. Write `keel::After<keel::All<I>>` for that. With
+  `keel::Alternative<I>` providers only, it still comes after each; mixed with
+  `keel::Provides<I>` providers it is `MixedProviders`. (#4)
+- **Breaking:** a component that provides `I` and lists `I` in any form (`I`,
+  `keel::Optional<I>`, `keel::After<I>`, `keel::All<I>`, `keel::Optional<keel::All<I>>`,
+  `keel::After<keel::All<I>>`) depends on itself: `DependencyCycle<TypeList<C>>`, whatever
+  the other providers of `I` (a second provider made `I`/`Optional<I>` `AmbiguousDependency`,
+  and `After<I>` ordered after the others). `keel::After<C>` and `keel::After<keel::All<C>>`
+  in `C` itself are cycles too; they did nothing. `All<I>` left the component itself out
+  ("composite"); `getAll<I>()` now returns every enabled provider. A component that wants
+  all the providers of `I`, or to come after the other providers of its own interface,
+  provides another interface instead. (#5)
 - A root `getComponent<I>()` of an alternative, or `start()`, called while `init()` is still
   running (from a component's hook) no longer reports a failed `init()`: the messages are
   `init() hasn't chosen among its alternatives yet (...)` and `start() called before init() returned`.

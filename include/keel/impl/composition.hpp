@@ -191,12 +191,8 @@ struct Composition<TypeList<Cs...>> {
     template <class T>
     using RootBroken = std::conditional_t<(brokenCount<T> == 0 || dependentCount<T> > 0), Passed, Broken<T>>;
 
-    template <class C, class T>
-    static constexpr Row others{(!std::is_same_v<C, Cs> && isProvider<T, Cs>)...};
-    template <class C, class T>
-    static constexpr Row unconditionalOthers{(!std::is_same_v<C, Cs> && isProvider<T, Cs> && !isConditional<Cs>)...};
-    template <class C, class T>
-    using Others = typename KeepIf<TypeList<Cs...>, others<C, T>, Indices>::type;
+    template <class T>
+    static constexpr Row unconditionalProviders{(isProvider<T, Cs> && !isConditional<Cs>)...};
 
     // For a dependency of C on T: the likely forgotten keel::Provides<T>.
     template <class C, class T>
@@ -210,7 +206,7 @@ struct Composition<TypeList<Cs...>> {
     template <class Self, class Entry, class C = typename Self::type, class T = typename Split<Entry>::target>
     static auto check() {
         constexpr Use use = Split<Entry>::use;
-        constexpr bool collection = use == Use::all || use == Use::optionalAll;
+        constexpr bool collection = use == Use::all || use == Use::optionalAll || use == Use::orderingAll;
         if constexpr (!validEntry<Entry>) {
             if constexpr (std::is_same_v<Entry, FirstInvalidOn<Stripped<T>, EntriesOf<C>>>) {
                 return Outcome<InvalidDependency<C, Entry>>{};
@@ -225,8 +221,8 @@ struct Composition<TypeList<Cs...>> {
             }
         } else if constexpr (resolution<T> == Resolution::none || collection) {
             return checkAbsent<C, T, use>();
-        } else if constexpr (use == Use::ordering) {
-            return Outcome<Passed>{};  // After<T> orders after every provider
+        } else if constexpr (isProvider<T, C>) {
+            return Outcome<Passed>{};  // C depends on itself: the cycle is the one error
         } else if constexpr (resolution<T> == Resolution::mixed) {
             return Outcome<Mixed<T>>{};
         } else if constexpr (resolution<T> == Resolution::ambiguous) {
@@ -238,17 +234,17 @@ struct Composition<TypeList<Cs...>> {
         }
     }
     // No provider of T, or a collection. A component that derives from T without providing it
-    // is the likely mistake.
+    // is the likely mistake. A provider of T that lists a collection of T is a cycle, reported as one.
     template <class C, class T, Use use, class Subclass = FirstOr<Derived<C, T>, void>>
     static auto checkAbsent() {
         if constexpr (!std::is_void_v<Subclass>) {
             return Outcome<UndeclaredProvider<C, T, Subclass>>{};
         } else if constexpr (use == Use::required) {
             return Outcome<MissingDependency<C, T>>{};
-        } else if constexpr (use == Use::all && count(others<C, T>) == 0) {
+        } else if constexpr (use == Use::all && providerCount<T> == 0) {
             return Outcome<MissingProvider<C, T>>{};
-        } else if constexpr (use == Use::all && count(unconditionalOthers<C, T>) == 0) {
-            return Outcome<OnlyConditionalProviders<C, T, Others<C, T>>>{};
+        } else if constexpr (use == Use::all && count(unconditionalProviders<T>) == 0 && !isProvider<T, C>) {
+            return Outcome<OnlyConditionalProviders<C, T, Providers<T>>>{};
         } else {
             return Outcome<Passed>{};  // absent and optional or ordering only, or a collection
         }
@@ -256,7 +252,9 @@ struct Composition<TypeList<Cs...>> {
     template <class C, class Entry>
     using Check = typename decltype(check<std::type_identity<C>, Entry>())::type;
 
-    // For several non-alternative providers: none, so it is reported as ambiguous, not as a cycle too.
+    // A collection: every provider, C included (a cycle). An entry on one T: C itself if it
+    // provides T (a cycle, whatever the others), else none for several non-alternative
+    // providers, so it is reported as ambiguous, not as a cycle too.
     template <class C, class Entry>
     static constexpr Row edgesOf() {
         using T = typename Split<Entry>::target;
@@ -264,10 +262,11 @@ struct Composition<TypeList<Cs...>> {
         Row row{};
         if constexpr (!validEntry<Entry>) {
             // InvalidDependency: no edges
-        } else if constexpr (use == Use::ordering || use == Use::all || use == Use::optionalAll) {
-            row = others<C, T>;
-        } else if constexpr ((use == Use::required || use == Use::optional) &&
-                             (providerCount<T> <= 1 || chosenAtRuntime<T>)) {
+        } else if constexpr (use == Use::all || use == Use::optionalAll || use == Use::orderingAll) {
+            row = providers<T>;
+        } else if constexpr (isProvider<T, C>) {
+            row[index<C>] = true;
+        } else if constexpr (providerCount<T> <= 1 || chosenAtRuntime<T>) {
             row = providers<T>;
         }
         return row;

@@ -40,7 +40,7 @@ public:
 template <class T>
 struct Optional {};
 
-/// Ordering-only dependency: init after T if T is composed; gives no access to T.
+/// Ordering-only dependency: init after T if composed; After<All<I>>: after every provider of I. No access.
 template <class T>
 struct After {};
 
@@ -262,7 +262,7 @@ inline std::string concat(std::initializer_list<std::string_view> parts) {
 }
 
 // How an entry uses the type it names.
-enum class Use { required, optional, ordering, all, optionalAll };
+enum class Use { required, optional, ordering, all, optionalAll, orderingAll };
 
 // What an entry of a keel::Component<...> list names (`target`), and how (`use`).
 template <class D, Use U = Use::required>
@@ -278,6 +278,8 @@ template <class I>
 struct Split<All<I>> : Split<I, Use::all> {};
 template <class I>
 struct Split<Optional<All<I>>> : Split<I, Use::optionalAll> {};
+template <class I>
+struct Split<After<All<I>>> : Split<I, Use::orderingAll> {};
 
 template <class Entry, Use... uses>
 inline constexpr bool usedAs = ((Split<Entry>::use == uses) || ...);
@@ -477,7 +479,7 @@ private:
     void* lookup(TypeId id, std::string_view dependency, bool required) const;
     // Every component bound to id, in init order; pass each one to useIfEnabled().
     const std::vector<Binding>& lookupAll(TypeId id, std::string_view dependency) const;
-    // nullptr if the binding is this component or disabled.
+    // nullptr if the binding is disabled.
     void* useIfEnabled(const Binding& binding, std::string_view dependency) const;
     void checkCanUse(std::string_view accessor, std::string_view dependency) const;
     void* use(const Binding& binding, std::string_view dependency) const;
@@ -507,10 +509,11 @@ public:
     using OptionalDependencies = detail::TargetsOf<Entries, detail::Use::optional>;
     using AfterDependencies = detail::TargetsOf<Entries, detail::Use::ordering>;
     using AllDependencies = detail::TargetsOf<Entries, detail::Use::all, detail::Use::optionalAll>;
+    using AfterAllDependencies = detail::TargetsOf<Entries, detail::Use::orderingAll>;
     // Only valid entries: an invalid one is InvalidDependency, even if listed twice.
     using DeclaredDependencies = detail::ValidTargets<Dependencies...>;
 
-    // T, Optional<T>, After<T>, All<T> and Optional<All<T>> all name T: two of them are a duplicate.
+    // T, Optional<T>, After<T>, All<T>, Optional<All<T>> and After<All<T>> all name T: two are a duplicate.
     static constexpr bool uniqueEntries = detail::UniqueList<DeclaredDependencies>::value;
 
 private:
@@ -539,6 +542,9 @@ protected:
                           "keel: T is declared keel::After<T>, which is ordering only; replace it with T to use T");
             static_assert(!detail::contains<T, AllDependencies>,
                           "keel: T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()");
+            static_assert(!detail::contains<T, AfterAllDependencies>,
+                          "keel: T is declared keel::After<keel::All<T>>, which is ordering only; replace it with "
+                          "keel::All<T> (or keel::Optional<keel::All<T>>) and use getAll<T>()");
             static_assert(detail::contains<T, DeclaredDependencies>,
                           "keel: getComponent<T>() requires T to be listed in this component's keel::Component<...>");
         }
@@ -560,6 +566,9 @@ protected:
                           "keel::Optional<T> to use T");
             static_assert(!detail::contains<T, AllDependencies>,
                           "keel: T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()");
+            static_assert(!detail::contains<T, AfterAllDependencies>,
+                          "keel: T is declared keel::After<keel::All<T>>, which is ordering only; replace it with "
+                          "keel::All<T> (or keel::Optional<keel::All<T>>) and use getAll<T>()");
             static_assert(detail::contains<T, DeclaredDependencies>,
                           "keel: findComponent<T>() requires keel::Optional<T> in this component's "
                           "keel::Component<...>");
@@ -567,7 +576,7 @@ protected:
         return static_cast<T*>(lookup(detail::typeId<T>(), detail::typeName<T>(), false));
     }
 
-    /// Every enabled provider of I except this component, in init order.
+    /// Every enabled provider of I, in init order.
     template <class I>
     std::vector<I*> getAll() const {
         if constexpr (baseMarker<I> && checkedAccess<I>) {
@@ -583,6 +592,9 @@ protected:
                           "replace it with keel::Optional<keel::All<I>> to use every provider");
             static_assert(!detail::contains<I, AfterDependencies>,
                           "keel: I is declared keel::After<I>, which is ordering only; replace it with "
+                          "keel::All<I> (or keel::Optional<keel::All<I>>) to use I");
+            static_assert(!detail::contains<I, AfterAllDependencies>,
+                          "keel: I is declared keel::After<keel::All<I>>, which is ordering only; replace it with "
                           "keel::All<I> (or keel::Optional<keel::All<I>>) to use I");
             static_assert(detail::contains<I, DeclaredDependencies>,
                           "keel: getAll<I>() requires keel::All<I> or keel::Optional<keel::All<I>> in this "
@@ -783,7 +795,8 @@ template <class Base>
 struct ComponentListCheck {
     static_assert(Base::uniqueEntries,
                   "keel: a dependency is listed twice in keel::Component<...> (T, keel::Optional<T>, "
-                  "keel::After<T>, keel::All<T> and keel::Optional<keel::All<T>> count as the same)");
+                  "keel::After<T>, keel::All<T>, keel::Optional<keel::All<T>> and keel::After<keel::All<T>> count "
+                  "as the same)");
 };
 
 template <class Component, class Dependency>
@@ -797,11 +810,12 @@ template <class Component, class Interface, class Providers>
 struct AmbiguousDependency {
     static_assert(fixed<AmbiguousDependency>,
                   "keel: ambiguous dependency: the Component in AmbiguousDependency<Component, Interface, "
-                  "TypeList<Providers...>> needs one Interface, and each of the Providers is or provides it. "
-                  "Compose only one of them, depend on the one you want by its own type, depend on "
-                  "keel::All<Interface> to use all of them, or let configuration choose: derive "
-                  "each of them from keel::Alternative<Interface> instead of keel::Provides<Interface>, and from "
-                  "keel::Conditional, and enable one at runtime.");
+                  "TypeList<Providers...>> needs one Interface (as Interface, keel::Optional<Interface> or "
+                  "keel::After<Interface>), and each of the Providers is or provides it. Compose only one of "
+                  "them, depend on the one you want by its own type, depend on keel::All<Interface> to use all of "
+                  "them (keel::After<keel::All<Interface>> to come after all of them), or let configuration "
+                  "choose: derive each of them from keel::Alternative<Interface> instead of "
+                  "keel::Provides<Interface>, and from keel::Conditional, and enable one at runtime.");
 };
 
 template <class Interface, class Provides, class Alternatives>
@@ -818,9 +832,8 @@ template <class Component, class Interface>
 struct MissingProvider {
     static_assert(fixed<MissingProvider>,
                   "keel: the Component in MissingProvider<Component, Interface> lists keel::All<Interface>, which "
-                  "needs at least one provider, and no composed component (other than Component itself) is or "
-                  "provides Interface. Compose one, or depend on keel::Optional<keel::All<Interface>> if none is "
-                  "fine.");
+                  "needs at least one provider, and no composed component is or provides Interface. Compose one, "
+                  "or depend on keel::Optional<keel::All<Interface>> if none is fine.");
 };
 
 template <class Component, class Interface, class Providers>
@@ -866,7 +879,7 @@ template <class Component, class T, class Derived>
 struct UndeclaredProvider {
     static_assert(fixed<UndeclaredProvider>,
                   "keel: the Component in UndeclaredProvider<Component, T, Derived> depends on T (as T, "
-                  "keel::Optional<T>, keel::After<T> or keel::All<T>), and Derived derives from T without "
+                  "keel::Optional<T>, keel::After<T>, keel::All<T>, ...), and Derived derives from T without "
                   "providing it: keel matches exact types, so Derived isn't used as a T. Derive Derived from "
                   "keel::Provides<T> too (publicly); if T is itself a component, compose T, or derive T from "
                   "keel::Provides<T> so that its subclasses provide it; or depend on Derived.");
@@ -1294,12 +1307,8 @@ struct Composition<TypeList<Cs...>> {
     template <class T>
     using RootBroken = std::conditional_t<(brokenCount<T> == 0 || dependentCount<T> > 0), Passed, Broken<T>>;
 
-    template <class C, class T>
-    static constexpr Row others{(!std::is_same_v<C, Cs> && isProvider<T, Cs>)...};
-    template <class C, class T>
-    static constexpr Row unconditionalOthers{(!std::is_same_v<C, Cs> && isProvider<T, Cs> && !isConditional<Cs>)...};
-    template <class C, class T>
-    using Others = typename KeepIf<TypeList<Cs...>, others<C, T>, Indices>::type;
+    template <class T>
+    static constexpr Row unconditionalProviders{(isProvider<T, Cs> && !isConditional<Cs>)...};
 
     // For a dependency of C on T: the likely forgotten keel::Provides<T>.
     template <class C, class T>
@@ -1313,7 +1322,7 @@ struct Composition<TypeList<Cs...>> {
     template <class Self, class Entry, class C = typename Self::type, class T = typename Split<Entry>::target>
     static auto check() {
         constexpr Use use = Split<Entry>::use;
-        constexpr bool collection = use == Use::all || use == Use::optionalAll;
+        constexpr bool collection = use == Use::all || use == Use::optionalAll || use == Use::orderingAll;
         if constexpr (!validEntry<Entry>) {
             if constexpr (std::is_same_v<Entry, FirstInvalidOn<Stripped<T>, EntriesOf<C>>>) {
                 return Outcome<InvalidDependency<C, Entry>>{};
@@ -1328,8 +1337,8 @@ struct Composition<TypeList<Cs...>> {
             }
         } else if constexpr (resolution<T> == Resolution::none || collection) {
             return checkAbsent<C, T, use>();
-        } else if constexpr (use == Use::ordering) {
-            return Outcome<Passed>{};  // After<T> orders after every provider
+        } else if constexpr (isProvider<T, C>) {
+            return Outcome<Passed>{};  // C depends on itself: the cycle is the one error
         } else if constexpr (resolution<T> == Resolution::mixed) {
             return Outcome<Mixed<T>>{};
         } else if constexpr (resolution<T> == Resolution::ambiguous) {
@@ -1341,17 +1350,17 @@ struct Composition<TypeList<Cs...>> {
         }
     }
     // No provider of T, or a collection. A component that derives from T without providing it
-    // is the likely mistake.
+    // is the likely mistake. A provider of T that lists a collection of T is a cycle, reported as one.
     template <class C, class T, Use use, class Subclass = FirstOr<Derived<C, T>, void>>
     static auto checkAbsent() {
         if constexpr (!std::is_void_v<Subclass>) {
             return Outcome<UndeclaredProvider<C, T, Subclass>>{};
         } else if constexpr (use == Use::required) {
             return Outcome<MissingDependency<C, T>>{};
-        } else if constexpr (use == Use::all && count(others<C, T>) == 0) {
+        } else if constexpr (use == Use::all && providerCount<T> == 0) {
             return Outcome<MissingProvider<C, T>>{};
-        } else if constexpr (use == Use::all && count(unconditionalOthers<C, T>) == 0) {
-            return Outcome<OnlyConditionalProviders<C, T, Others<C, T>>>{};
+        } else if constexpr (use == Use::all && count(unconditionalProviders<T>) == 0 && !isProvider<T, C>) {
+            return Outcome<OnlyConditionalProviders<C, T, Providers<T>>>{};
         } else {
             return Outcome<Passed>{};  // absent and optional or ordering only, or a collection
         }
@@ -1359,7 +1368,9 @@ struct Composition<TypeList<Cs...>> {
     template <class C, class Entry>
     using Check = typename decltype(check<std::type_identity<C>, Entry>())::type;
 
-    // For several non-alternative providers: none, so it is reported as ambiguous, not as a cycle too.
+    // A collection: every provider, C included (a cycle). An entry on one T: C itself if it
+    // provides T (a cycle, whatever the others), else none for several non-alternative
+    // providers, so it is reported as ambiguous, not as a cycle too.
     template <class C, class Entry>
     static constexpr Row edgesOf() {
         using T = typename Split<Entry>::target;
@@ -1367,10 +1378,11 @@ struct Composition<TypeList<Cs...>> {
         Row row{};
         if constexpr (!validEntry<Entry>) {
             // InvalidDependency: no edges
-        } else if constexpr (use == Use::ordering || use == Use::all || use == Use::optionalAll) {
-            row = others<C, T>;
-        } else if constexpr ((use == Use::required || use == Use::optional) &&
-                             (providerCount<T> <= 1 || chosenAtRuntime<T>)) {
+        } else if constexpr (use == Use::all || use == Use::optionalAll || use == Use::orderingAll) {
+            row = providers<T>;
+        } else if constexpr (isProvider<T, C>) {
+            row[index<C>] = true;
+        } else if constexpr (providerCount<T> <= 1 || chosenAtRuntime<T>) {
             row = providers<T>;
         }
         return row;
@@ -1635,7 +1647,7 @@ inline const std::vector<Binding>& ComponentBase::lookupAll(TypeId id, std::stri
 }
 
 inline void* ComponentBase::useIfEnabled(const Binding& b, std::string_view dependency) const {
-    if (b.owner == this || b.owner->state_ == State::disabled) return nullptr;
+    if (b.owner->state_ == State::disabled) return nullptr;
     return use(b, dependency);
 }
 
@@ -2343,6 +2355,7 @@ private:
             case Use::optional:
                 return "style=dashed";
             case Use::ordering:
+            case Use::orderingAll:
                 return "style=dotted, arrowhead=empty";
             case Use::all:
                 return "style=bold";

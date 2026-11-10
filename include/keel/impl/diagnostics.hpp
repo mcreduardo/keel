@@ -85,7 +85,8 @@ template <class Base>
 struct ComponentListCheck {
     static_assert(Base::uniqueEntries,
                   "keel: a dependency is listed twice in keel::Component<...> (T, keel::Optional<T>, "
-                  "keel::After<T>, keel::All<T> and keel::Optional<keel::All<T>> count as the same)");
+                  "keel::After<T>, keel::All<T>, keel::Optional<keel::All<T>> and keel::After<keel::All<T>> count "
+                  "as the same)");
 };
 
 template <class Component, class Dependency>
@@ -99,11 +100,12 @@ template <class Component, class Interface, class Providers>
 struct AmbiguousDependency {
     static_assert(fixed<AmbiguousDependency>,
                   "keel: ambiguous dependency: the Component in AmbiguousDependency<Component, Interface, "
-                  "TypeList<Providers...>> needs one Interface, and each of the Providers is or provides it. "
-                  "Compose only one of them, depend on the one you want by its own type, depend on "
-                  "keel::All<Interface> to use all of them, or let configuration choose: derive "
-                  "each of them from keel::Alternative<Interface> instead of keel::Provides<Interface>, and from "
-                  "keel::Conditional, and enable one at runtime.");
+                  "TypeList<Providers...>> needs one Interface (as Interface, keel::Optional<Interface> or "
+                  "keel::After<Interface>), and each of the Providers is or provides it. Compose only one of "
+                  "them, depend on the one you want by its own type, depend on keel::All<Interface> to use all of "
+                  "them (keel::After<keel::All<Interface>> to come after all of them), or let configuration "
+                  "choose: derive each of them from keel::Alternative<Interface> instead of "
+                  "keel::Provides<Interface>, and from keel::Conditional, and enable one at runtime.");
 };
 
 template <class Interface, class Provides, class Alternatives>
@@ -120,9 +122,8 @@ template <class Component, class Interface>
 struct MissingProvider {
     static_assert(fixed<MissingProvider>,
                   "keel: the Component in MissingProvider<Component, Interface> lists keel::All<Interface>, which "
-                  "needs at least one provider, and no composed component (other than Component itself) is or "
-                  "provides Interface. Compose one, or depend on keel::Optional<keel::All<Interface>> if none is "
-                  "fine.");
+                  "needs at least one provider, and no composed component is or provides Interface. Compose one, "
+                  "or depend on keel::Optional<keel::All<Interface>> if none is fine.");
 };
 
 template <class Component, class Interface, class Providers>
@@ -168,7 +169,7 @@ template <class Component, class T, class Derived>
 struct UndeclaredProvider {
     static_assert(fixed<UndeclaredProvider>,
                   "keel: the Component in UndeclaredProvider<Component, T, Derived> depends on T (as T, "
-                  "keel::Optional<T>, keel::After<T> or keel::All<T>), and Derived derives from T without "
+                  "keel::Optional<T>, keel::After<T>, keel::All<T>, ...), and Derived derives from T without "
                   "providing it: keel matches exact types, so Derived isn't used as a T. Derive Derived from "
                   "keel::Provides<T> too (publicly); if T is itself a component, compose T, or derive T from "
                   "keel::Provides<T> so that its subclasses provide it; or depend on Derived.");

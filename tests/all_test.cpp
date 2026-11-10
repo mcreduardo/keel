@@ -179,14 +179,20 @@ TEST(get_all_from_a_constructor_throws) {
 }
 
 // ---------------------------------------------------------------------------
-// A composite: a provider of HealthCheck that uses every other one.
+// An aggregator of HealthCheck provides another interface: listing All<HealthCheck> in a
+// provider of HealthCheck would be a cycle.
 
 namespace {
 
-class AllChecks : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthCheck>,
-                  public HealthCheck {
+struct HealthReport {
+    virtual ~HealthReport() = default;
+    virtual std::string summary() const = 0;
+};
+
+class AllChecks : public keel::Component<keel::All<HealthCheck>>, public keel::Provides<HealthReport>,
+                  public HealthReport {
 public:
-    std::string name() const override {
+    std::string summary() const override {
         std::string out = "all of";
         for (const std::string& n : names_) out += " " + n;
         return out;
@@ -202,19 +208,12 @@ private:
 
 }  // namespace
 
-TEST(a_provider_of_i_with_all_i_gets_the_other_providers) {
+TEST(an_aggregator_providing_another_interface_gets_every_provider) {
     events.clear();
     auto app = keel::compose<AllChecks, Queue, Database>();
     app.init();
     CHECK((events == std::vector<std::string>{"+Database", "init Queue", "init Database", "init AllChecks"}));
-    CHECK(app.getComponent<AllChecks>().name() == "all of queue database");
-}
-
-TEST(an_all_of_i_includes_a_composite_provider_last) {
-    auto app = keel::compose<HealthEndpoint, AllChecks, Queue, Database>();
-    app.init();
-    CHECK((namesOf(app.getComponent<HealthEndpoint>().checks()) ==
-           std::vector<std::string>{"queue", "database", "all of queue database"}));
+    CHECK(app.getComponent<HealthReport>().summary() == "all of queue database");
 }
 
 // ---------------------------------------------------------------------------

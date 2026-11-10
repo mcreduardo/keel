@@ -141,7 +141,7 @@ in about 1 s on top of the standard headers (Apple clang 17, `-O0`, Apple M1).
 |---|---|
 | [Getting started](docs/getting-started.md) | installation, a complete program, components, `getComponent`, the composition root |
 | [A whole application](docs/walkthrough.md) | one program that uses the main features, step by step |
-| [Dependencies and interfaces](docs/dependencies.md) | required, `Optional`, `After`, `Provides`, `All`, `Optional<All>` |
+| [Dependencies and interfaces](docs/dependencies.md) | required, `Optional`, `After`, `Provides`, `All`, `Optional<All>`, `After<All>` |
 | [Lifecycle](docs/lifecycle.md) | `init` / `start` / `stop` / `deinit`, guarantees, failures and rollback, `run` |
 | [Composing an application](docs/composition.md) | `compose`, `App`, constructor arguments, `Bundle`, several compositions |
 | [Decisions at runtime](docs/runtime-decisions.md) | choosing an implementation (a factory, or `Alternative`), `Conditional`, turning a feature off |

@@ -81,7 +81,7 @@ private:
 };
 
 // Runs after every Storage, of which there may be several.
-class Backup : public keel::Component<keel::After<Storage>> {
+class Backup : public keel::Component<keel::After<keel::All<Storage>>> {
     void init() override { events.push_back("init Backup"); }
     void deinit() noexcept override { events.push_back("deinit Backup"); }
 };
@@ -146,7 +146,7 @@ TEST(an_optional_interface_gets_its_provider_or_nullptr) {
     }
 }
 
-TEST(after_an_interface_follows_every_provider) {
+TEST(after_all_of_an_interface_follows_every_provider) {
     events.clear();
     {
         auto app = keel::compose<Backup, MemoryStorage, DiskStorage>();
@@ -208,29 +208,6 @@ TEST(run_calls_an_inherited_member_on_the_provider) {
 
 TEST(keel_run_calls_an_interface_member) {
     CHECK(keel::run<keel::App<Terminal>>(&Shell::serve) == 42);
-}
-
-// ---------------------------------------------------------------------------
-// A provider that is ordered after the other providers of its own interface.
-
-namespace {
-
-class CachedStorage : public keel::Component<keel::After<HealthCheck>>, public keel::Provides<HealthCheck>,
-                      public HealthCheck {
-public:
-    bool healthy() const override { return true; }
-
-private:
-    void init() override { events.push_back("init CachedStorage"); }
-};
-
-}  // namespace
-
-TEST(after_its_own_interface_follows_the_other_providers) {
-    events.clear();
-    auto app = keel::compose<CachedStorage, DiskStorage>();
-    app.init();
-    CHECK((events == std::vector<std::string>{"+DiskStorage", "init DiskStorage", "init CachedStorage"}));
 }
 
 // ---------------------------------------------------------------------------

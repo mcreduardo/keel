@@ -1,5 +1,5 @@
-// Must not compile: each composite lists keel::All<HealthCheck>, so each comes after the
-// other.
+// Must not compile: Local and Remote each provide HealthCheck and list
+// keel::All<HealthCheck>: each depends on itself and on the other.
 #include <keel.hpp>
 
 struct HealthCheck {

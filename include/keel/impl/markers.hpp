@@ -17,7 +17,7 @@ public:
 template <class T>
 struct Optional {};
 
-/// Ordering-only dependency: init after T if T is composed; gives no access to T.
+/// Ordering-only dependency: init after T if composed; After<All<I>>: after every provider of I. No access.
 template <class T>
 struct After {};
 

@@ -346,6 +346,7 @@ private:
             case Use::optional:
                 return "style=dashed";
             case Use::ordering:
+            case Use::orderingAll:
                 return "style=dotted, arrowhead=empty";
             case Use::all:
                 return "style=bold";

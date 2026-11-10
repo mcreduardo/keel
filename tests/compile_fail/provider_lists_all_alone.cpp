@@ -1,5 +1,5 @@
-// Must not compile: AllChecks provides HealthCheck and lists keel::All<HealthCheck>, which
-// leaves itself out, and no other provider is composed.
+// Must not compile: AllChecks is the only provider of HealthCheck and lists
+// keel::All<HealthCheck>: a cycle, not a missing provider.
 #include <keel.hpp>
 
 struct HealthCheck {

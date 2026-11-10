@@ -68,7 +68,7 @@ private:
     void* lookup(TypeId id, std::string_view dependency, bool required) const;
     // Every component bound to id, in init order; pass each one to useIfEnabled().
     const std::vector<Binding>& lookupAll(TypeId id, std::string_view dependency) const;
-    // nullptr if the binding is this component or disabled.
+    // nullptr if the binding is disabled.
     void* useIfEnabled(const Binding& binding, std::string_view dependency) const;
     void checkCanUse(std::string_view accessor, std::string_view dependency) const;
     void* use(const Binding& binding, std::string_view dependency) const;
@@ -98,10 +98,11 @@ public:
     using OptionalDependencies = detail::TargetsOf<Entries, detail::Use::optional>;
     using AfterDependencies = detail::TargetsOf<Entries, detail::Use::ordering>;
     using AllDependencies = detail::TargetsOf<Entries, detail::Use::all, detail::Use::optionalAll>;
+    using AfterAllDependencies = detail::TargetsOf<Entries, detail::Use::orderingAll>;
     // Only valid entries: an invalid one is InvalidDependency, even if listed twice.
     using DeclaredDependencies = detail::ValidTargets<Dependencies...>;
 
-    // T, Optional<T>, After<T>, All<T> and Optional<All<T>> all name T: two of them are a duplicate.
+    // T, Optional<T>, After<T>, All<T>, Optional<All<T>> and After<All<T>> all name T: two are a duplicate.
     static constexpr bool uniqueEntries = detail::UniqueList<DeclaredDependencies>::value;
 
 private:
@@ -130,6 +131,9 @@ protected:
                           "keel: T is declared keel::After<T>, which is ordering only; replace it with T to use T");
             static_assert(!detail::contains<T, AllDependencies>,
                           "keel: T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()");
+            static_assert(!detail::contains<T, AfterAllDependencies>,
+                          "keel: T is declared keel::After<keel::All<T>>, which is ordering only; replace it with "
+                          "keel::All<T> (or keel::Optional<keel::All<T>>) and use getAll<T>()");
             static_assert(detail::contains<T, DeclaredDependencies>,
                           "keel: getComponent<T>() requires T to be listed in this component's keel::Component<...>");
         }
@@ -151,6 +155,9 @@ protected:
                           "keel::Optional<T> to use T");
             static_assert(!detail::contains<T, AllDependencies>,
                           "keel: T is declared keel::All<T> or keel::Optional<keel::All<T>>; use getAll<T>()");
+            static_assert(!detail::contains<T, AfterAllDependencies>,
+                          "keel: T is declared keel::After<keel::All<T>>, which is ordering only; replace it with "
+                          "keel::All<T> (or keel::Optional<keel::All<T>>) and use getAll<T>()");
             static_assert(detail::contains<T, DeclaredDependencies>,
                           "keel: findComponent<T>() requires keel::Optional<T> in this component's "
                           "keel::Component<...>");
@@ -158,7 +165,7 @@ protected:
         return static_cast<T*>(lookup(detail::typeId<T>(), detail::typeName<T>(), false));
     }
 
-    /// Every enabled provider of I except this component, in init order.
+    /// Every enabled provider of I, in init order.
     template <class I>
     std::vector<I*> getAll() const {
         if constexpr (baseMarker<I> && checkedAccess<I>) {
@@ -174,6 +181,9 @@ protected:
                           "replace it with keel::Optional<keel::All<I>> to use every provider");
             static_assert(!detail::contains<I, AfterDependencies>,
                           "keel: I is declared keel::After<I>, which is ordering only; replace it with "
+                          "keel::All<I> (or keel::Optional<keel::All<I>>) to use I");
+            static_assert(!detail::contains<I, AfterAllDependencies>,
+                          "keel: I is declared keel::After<keel::All<I>>, which is ordering only; replace it with "
                           "keel::All<I> (or keel::Optional<keel::All<I>>) to use I");
             static_assert(detail::contains<I, DeclaredDependencies>,
                           "keel: getAll<I>() requires keel::All<I> or keel::Optional<keel::All<I>> in this "
