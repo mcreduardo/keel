@@ -5,7 +5,7 @@ All notable changes to keel are listed here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html); before 1.0, a new minor version
 may change the API.
 
-## Unreleased
+## 0.2.0 – 2026-11-10
 
 ### Added
 

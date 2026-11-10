@@ -202,11 +202,11 @@ cmake --install keel-build --prefix /opt/keel
 ```
 
 ```cmake
-find_package(keel 0.1 CONFIG REQUIRED)  # with -DCMAKE_PREFIX_PATH=/opt/keel
+find_package(keel 0.2 CONFIG REQUIRED)  # with -DCMAKE_PREFIX_PATH=/opt/keel
 target_link_libraries(app PRIVATE keel::keel)
 ```
 
-The installed package accepts the same minor version only (0.1.x for `0.1`): before 1.0, a
+The installed package accepts the same minor version only (0.2.x for `0.2`): before 1.0, a
 new minor version may change the API. Or copy [`keel.hpp`](keel.hpp) into your project and
 include it.
 

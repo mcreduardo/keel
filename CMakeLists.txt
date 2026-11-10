@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)  # PROJECT_IS_TOP_LEVEL
-project(keel VERSION 0.1.0 LANGUAGES CXX)
+project(keel VERSION 0.2.0 LANGUAGES CXX)
 
 # keel is a single header: the target only carries the include path, C++20, and the
 # threads library (keel::AsyncInit and keel::AsyncStart run components on threads).
@@ -33,7 +33,7 @@ endif()
 # Install: the header, the keel::keel target, and a package config for
 # find_package(keel CONFIG). keel is header-only, so the package is architecture-independent.
 # Version compatibility is SameMinorVersion: before 1.0, a new minor version may change the
-# API, so find_package(keel 0.1) accepts 0.1.x only.
+# API, so find_package(keel 0.2) accepts 0.2.x only.
 if(KEEL_INSTALL)
     include(CMakePackageConfigHelpers)
     set(KEEL_CONFIG_DIR ${CMAKE_INSTALL_DATADIR}/cmake/keel)
